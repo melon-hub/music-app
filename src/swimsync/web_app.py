@@ -31,10 +31,18 @@ sync_status = {
     "status": "idle",
     "speed_mbps": 0,
     "file_size_mb": 0,
-    "error": None
+    "error": None,
+    "downloaded_mb": 0,
+    "total_download_mb": 0,
+    "completed_count": 0,
+    "failed_count": 0,
+    "pending_count": 0
 }
 sync_thread = None
 sync_lock = threading.Lock()
+
+# Average track size estimate for new tracks (MB)
+DEFAULT_AVG_TRACK_SIZE_MB = 8.0
 
 
 def init_managers():
@@ -60,7 +68,8 @@ def get_config():
         "storage_limit_gb": config.get("storage_limit_gb"),
         "auto_delete_removed": config.get("auto_delete_removed"),
         "last_playlist_url": config.get("last_playlist_url"),
-        "download_timeout": config.get("download_timeout")
+        "download_timeout": config.get("download_timeout"),
+        "device_name": config.get("device_name")
     })
 
 
@@ -142,6 +151,11 @@ def update_config():
                 logging.error(f"Invalid type for last_playlist_url: {type(value)}")
                 return jsonify({"error": "Playlist URL must be a string"}), 400
 
+        elif key == "device_name":
+            if not isinstance(value, str) or len(value) > 100:
+                logging.error(f"Invalid device_name value: {value}")
+                return jsonify({"error": "Device name must be a string with max 100 characters"}), 400
+
     # Apply validated settings
     for key, value in data.items():
         if key in ConfigManager.DEFAULTS:
@@ -188,6 +202,31 @@ def load_playlist():
         total_size_mb = state.get_total_size_mb()
         storage_limit_gb = config.get("storage_limit_gb")
 
+        # Calculate size estimates for sync preview
+        avg_track_size = state.get_avg_track_size_mb()
+        # Use actual average if available, otherwise use default estimate
+        est_track_size = avg_track_size if avg_track_size > 0 else DEFAULT_AVG_TRACK_SIZE_MB
+
+        # Calculate existing tracks size (tracks already downloaded)
+        existing_size_mb = 0.0
+        for existing_track in preview["existing"]:
+            track_data = state.get_track(
+                existing_track.get("title", ""),
+                existing_track.get("artist", "")
+            )
+            if track_data:
+                existing_size_mb += track_data.get("file_size_mb", 0)
+
+        # Estimate size for new tracks
+        new_count = len(preview["new"]) + len(preview.get("suspect", []))
+        new_size_mb = new_count * est_track_size
+
+        # Total estimated playlist size
+        total_est_size_mb = len(tracks) * est_track_size
+
+        # Projected size after sync (existing + new downloads)
+        after_sync_size_mb = existing_size_mb + new_size_mb
+
         return jsonify({
             "success": True,
             "playlist_name": playlist_name,
@@ -201,6 +240,12 @@ def load_playlist():
             "storage": {
                 "used_mb": total_size_mb,
                 "limit_gb": storage_limit_gb
+            },
+            "size_estimates": {
+                "total_est_size_mb": total_est_size_mb,
+                "existing_size_mb": existing_size_mb,
+                "new_size_mb": new_size_mb,
+                "after_sync_size_mb": after_sync_size_mb
             }
         })
 
@@ -230,6 +275,11 @@ def start_sync():
     if not tracks_to_download and not tracks_to_delete:
         return jsonify({"error": "Nothing to sync"}), 400
 
+    # Estimate total download size based on average track size
+    avg_track_size = state.get_avg_track_size_mb()
+    est_track_size = avg_track_size if avg_track_size > 0 else DEFAULT_AVG_TRACK_SIZE_MB
+    total_download_mb = len(tracks_to_download) * est_track_size
+
     # Reset sync status
     with sync_lock:
         sync_status = {
@@ -240,7 +290,12 @@ def start_sync():
             "status": "starting",
             "speed_mbps": 0,
             "file_size_mb": 0,
-            "error": None
+            "error": None,
+            "downloaded_mb": 0,
+            "total_download_mb": total_download_mb,
+            "completed_count": 0,
+            "failed_count": 0,
+            "pending_count": len(tracks_to_download)
         }
 
     def progress_callback(current, total, track_name, status, extra=None):
@@ -253,6 +308,15 @@ def start_sync():
             sync_status["speed_mbps"] = extra.get("speed_mbps", 0)
             sync_status["file_size_mb"] = extra.get("file_size_mb", 0)
 
+            # Update download statistics
+            if extra.get("file_size_mb", 0) > 0 and status == "completed":
+                sync_status["downloaded_mb"] += extra.get("file_size_mb", 0)
+                sync_status["completed_count"] += 1
+                sync_status["pending_count"] = total - current
+            elif status == "failed":
+                sync_status["failed_count"] += 1
+                sync_status["pending_count"] = total - current
+
     def sync_worker():
         global sync_status
         try:
@@ -263,6 +327,9 @@ def start_sync():
             )
             with sync_lock:
                 sync_status["status"] = "completed"
+                sync_status["pending_count"] = 0
+            # Update last sync time on successful completion
+            state.set_last_sync_time()
         except Exception as e:
             logging.error(f"Sync failed: {e}")
             with sync_lock:
@@ -311,13 +378,19 @@ def get_storage():
     total_size_mb = state.get_total_size_mb()
     track_count = state.get_track_count()
     storage_limit_gb = config.get("storage_limit_gb")
+    avg_track_size_mb = state.get_avg_track_size_mb()
+    last_sync_time = state.get_last_sync_time()
+    device_name = config.get("device_name")
 
     return jsonify({
         "used_mb": total_size_mb,
         "used_gb": total_size_mb / 1024,
         "limit_gb": storage_limit_gb,
         "track_count": track_count,
-        "percentage": (total_size_mb / 1024 / storage_limit_gb * 100) if storage_limit_gb > 0 else 0
+        "percentage": (total_size_mb / 1024 / storage_limit_gb * 100) if storage_limit_gb > 0 else 0,
+        "avg_track_size_mb": avg_track_size_mb,
+        "last_sync_time": last_sync_time,
+        "device_name": device_name
     })
 
 

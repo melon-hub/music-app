@@ -29,12 +29,26 @@ const elements = {
     playlistName: document.getElementById('playlist-name'),
     trackCount: document.getElementById('track-count'),
 
-    // Storage
+    // Playlist Stats Card
+    playlistStatsCard: document.getElementById('playlist-stats-card'),
+    statTotalTracks: document.getElementById('stat-total-tracks'),
+    statDuration: document.getElementById('stat-duration'),
+    statEstSize: document.getElementById('stat-est-size'),
+    statAvgSize: document.getElementById('stat-avg-size'),
+    breakdownExistingCount: document.getElementById('breakdown-existing-count'),
+    breakdownExistingSize: document.getElementById('breakdown-existing-size'),
+    breakdownNewCount: document.getElementById('breakdown-new-count'),
+    breakdownNewSize: document.getElementById('breakdown-new-size'),
+    breakdownRemovedCount: document.getElementById('breakdown-removed-count'),
+
+    // Storage (enhanced storage card)
     storageUsed: document.getElementById('storage-used'),
-    storageLimit: document.getElementById('storage-limit'),
     storageFill: document.getElementById('storage-fill'),
-    storagePercent: document.getElementById('storage-percent'),
-    syncSummary: document.getElementById('sync-summary'),
+    storageAfterSync: document.getElementById('storage-after-sync'),
+    storageDelta: document.getElementById('storage-delta'),
+    storageRemaining: document.getElementById('storage-remaining'),
+    storageLimitLabel: document.getElementById('storage-limit-label'),
+    storageAfterSyncMarker: document.getElementById('storage-after-sync-marker'),
 
     // Actions
     syncBtn: document.getElementById('sync-btn'),
@@ -49,12 +63,26 @@ const elements = {
     syncCurrentTrack: document.getElementById('sync-current-track'),
     syncSpeed: document.getElementById('sync-speed'),
     syncEta: document.getElementById('sync-eta'),
+    syncCurrentNum: document.getElementById('sync-current-num'),
+    syncTotalNum: document.getElementById('sync-total-num'),
+    syncDownloadedSize: document.getElementById('sync-downloaded-size'),
+    syncTotalSize: document.getElementById('sync-total-size'),
+    syncDoneCount: document.getElementById('sync-done-count'),
+    syncActiveCount: document.getElementById('sync-active-count'),
+    syncLeftCount: document.getElementById('sync-left-count'),
 
     // Settings
     settingBitrate: document.getElementById('setting-bitrate'),
     settingStorageLimit: document.getElementById('setting-storage-limit'),
     settingTimeout: document.getElementById('setting-timeout'),
-    saveSettingsBtn: document.getElementById('save-settings-btn')
+    saveSettingsBtn: document.getElementById('save-settings-btn'),
+
+    // Library Stats (Settings page)
+    libraryTotalTracks: document.getElementById('library-total-tracks'),
+    librarySize: document.getElementById('library-size'),
+    libraryAvgSize: document.getElementById('library-avg-size'),
+    libraryLastSync: document.getElementById('library-last-sync'),
+    libraryDeviceCapacity: document.getElementById('library-device-capacity')
 };
 
 // Initialize
@@ -231,11 +259,69 @@ function displayPlaylist(data) {
 
     elements.trackListContainer.classList.remove('hidden');
 
+    // Update playlist stats card
+    updatePlaylistStats(data);
+
     // Enable sync button if there's work to do
     const hasWork = data.preview.new.length > 0 ||
                     data.preview.suspect.length > 0 ||
                     (data.preview.removed.length > 0 && elements.deleteRemovedToggle.checked);
     elements.syncBtn.disabled = !hasWork;
+}
+
+function updatePlaylistStats(data) {
+    const totalTracks = data.tracks.length;
+    const existingCount = data.preview.existing ? data.preview.existing.length : 0;
+    const newCount = data.preview.new ? data.preview.new.length : 0;
+    const suspectCount = data.preview.suspect ? data.preview.suspect.length : 0;
+    const removedCount = data.preview.removed ? data.preview.removed.length : 0;
+
+    // Estimate sizes (~8MB per track is a reasonable estimate for 192kbps)
+    const avgSizeMb = 8;
+    const totalEstMb = totalTracks * avgSizeMb;
+    const existingSizeMb = existingCount * avgSizeMb;
+    const newSizeMb = (newCount + suspectCount) * avgSizeMb;
+
+    // Estimate duration (~3.5 minutes per track average)
+    const avgDurationMin = 3.5;
+    const totalDurationMin = totalTracks * avgDurationMin;
+    const durationHrs = totalDurationMin / 60;
+
+    // Update stats
+    if (elements.statTotalTracks) {
+        elements.statTotalTracks.textContent = totalTracks;
+    }
+    if (elements.statDuration) {
+        elements.statDuration.textContent = durationHrs >= 1 ? `~${durationHrs.toFixed(1)}h` : `~${Math.round(totalDurationMin)}m`;
+    }
+    if (elements.statEstSize) {
+        elements.statEstSize.textContent = formatSize(totalEstMb * 1024 * 1024);
+    }
+    if (elements.statAvgSize) {
+        elements.statAvgSize.textContent = `~${avgSizeMb} MB`;
+    }
+
+    // Update breakdown
+    if (elements.breakdownExistingCount) {
+        elements.breakdownExistingCount.textContent = existingCount;
+    }
+    if (elements.breakdownExistingSize) {
+        elements.breakdownExistingSize.textContent = `(${formatSize(existingSizeMb * 1024 * 1024)})`;
+    }
+    if (elements.breakdownNewCount) {
+        elements.breakdownNewCount.textContent = newCount + suspectCount;
+    }
+    if (elements.breakdownNewSize) {
+        elements.breakdownNewSize.textContent = `(${formatSize(newSizeMb * 1024 * 1024)})`;
+    }
+    if (elements.breakdownRemovedCount) {
+        elements.breakdownRemovedCount.textContent = removedCount;
+    }
+
+    // Show the stats card
+    if (elements.playlistStatsCard) {
+        elements.playlistStatsCard.classList.remove('hidden');
+    }
 }
 
 function getStatusLabel(status) {
@@ -249,26 +335,12 @@ function getStatusLabel(status) {
 }
 
 function updateSyncSummary() {
+    // This function is now deprecated - stats are shown in the playlist stats card
+    // Keep for backward compatibility but do nothing if elements don't exist
     if (!syncPreview) {
-        elements.syncSummary.textContent = 'Load a playlist to see sync preview';
         return;
     }
-
-    const newCount = syncPreview.new.length;
-    const suspectCount = syncPreview.suspect.length;
-    const removedCount = syncPreview.removed.length;
-    const downloadCount = newCount + suspectCount;
-    const estSize = downloadCount * 8; // ~8MB per track estimate
-
-    let summary = `${currentPlaylist.tracks.length} tracks | ${newCount} new | ${removedCount} removed`;
-    if (suspectCount > 0) {
-        summary += ` | ${suspectCount} suspect`;
-    }
-    if (downloadCount > 0) {
-        summary += ` | ~${estSize} MB to download`;
-    }
-
-    elements.syncSummary.textContent = summary;
+    // Storage display is updated separately via updateStorageDisplay
 }
 
 async function updateStorageDisplay(storage = null) {
@@ -283,14 +355,80 @@ async function updateStorageDisplay(storage = null) {
             storage = await response.json();
         }
 
-        const usedGb = storage.used_mb / 1024;
+        const usedMb = storage.used_mb || 0;
+        const usedGb = usedMb / 1024;
         const limitGb = storage.limit_gb || 32;
+        const limitMb = limitGb * 1024;
         const percent = Math.min((usedGb / limitGb) * 100, 100);
 
-        elements.storageUsed.textContent = `${usedGb.toFixed(1)} GB`;
-        elements.storageLimit.textContent = `${limitGb} GB`;
-        elements.storageFill.style.width = `${percent}%`;
-        elements.storagePercent.textContent = `${percent.toFixed(1)}%`;
+        // Calculate after-sync values based on current sync preview
+        let afterSyncMb = usedMb;
+        let deltaMb = 0;
+        if (syncPreview) {
+            const newCount = (syncPreview.new ? syncPreview.new.length : 0) +
+                             (syncPreview.suspect ? syncPreview.suspect.length : 0);
+            const avgSizeMb = 8; // ~8MB per track estimate
+            deltaMb = newCount * avgSizeMb;
+            afterSyncMb = usedMb + deltaMb;
+        }
+
+        const afterSyncGb = afterSyncMb / 1024;
+        const afterSyncPercent = Math.min((afterSyncGb / limitGb) * 100, 100);
+        const remainingGb = Math.max(limitGb - afterSyncGb, 0);
+
+        // Update storage display
+        if (elements.storageUsed) {
+            elements.storageUsed.textContent = `${usedGb.toFixed(1)} GB`;
+        }
+        if (elements.storageFill) {
+            elements.storageFill.style.width = `${percent}%`;
+        }
+        if (elements.storageLimitLabel) {
+            elements.storageLimitLabel.textContent = `${limitGb} GB`;
+        }
+
+        // Update after-sync info
+        if (elements.storageAfterSync) {
+            elements.storageAfterSync.textContent = `${afterSyncGb.toFixed(1)} GB`;
+        }
+        if (elements.storageDelta) {
+            if (deltaMb > 0) {
+                elements.storageDelta.textContent = `(+${formatSize(deltaMb * 1024 * 1024)})`;
+            } else {
+                elements.storageDelta.textContent = '';
+            }
+        }
+        if (elements.storageRemaining) {
+            elements.storageRemaining.textContent = `${remainingGb.toFixed(1)} GB`;
+        }
+
+        // Update after-sync marker on progress bar
+        if (elements.storageAfterSyncMarker) {
+            if (deltaMb > 0) {
+                elements.storageAfterSyncMarker.style.left = `${afterSyncPercent}%`;
+                elements.storageAfterSyncMarker.classList.remove('hidden');
+            } else {
+                elements.storageAfterSyncMarker.classList.add('hidden');
+            }
+        }
+
+        // Update library stats on settings page
+        if (elements.libraryTotalTracks && storage.track_count !== undefined) {
+            elements.libraryTotalTracks.textContent = storage.track_count;
+        }
+        if (elements.librarySize) {
+            elements.librarySize.textContent = formatSize(usedMb * 1024 * 1024);
+        }
+        if (elements.libraryAvgSize && storage.track_count > 0) {
+            const avgSize = usedMb / storage.track_count;
+            elements.libraryAvgSize.textContent = formatSize(avgSize * 1024 * 1024);
+        }
+        if (elements.libraryDeviceCapacity) {
+            elements.libraryDeviceCapacity.textContent = `${limitGb} GB`;
+        }
+        if (elements.libraryLastSync && storage.last_sync) {
+            elements.libraryLastSync.textContent = formatLastSync(storage.last_sync);
+        }
 
     } catch (error) {
         console.error('Failed to update storage:', error);
@@ -394,28 +532,82 @@ async function pollSyncStatus() {
 }
 
 function updateSyncProgress(status) {
-    const percent = status.total > 0 ? Math.round((status.current / status.total) * 100) : 0;
+    const current = status.current || 0;
+    const total = status.total || 0;
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
 
-    // Update text
-    elements.syncPercent.textContent = `${percent}%`;
-    elements.syncPercentInner.textContent = `${percent}%`;
-    elements.syncCurrentTrack.textContent = status.current_track || 'Waiting...';
-    elements.syncSpeed.textContent = status.speed_mbps > 0 ? `${status.speed_mbps.toFixed(1)} MB/s` : '0 MB/s';
+    // Update percentage displays
+    if (elements.syncPercent) {
+        elements.syncPercent.textContent = `${percent}%`;
+    }
+    if (elements.syncPercentInner) {
+        elements.syncPercentInner.textContent = `${percent}%`;
+    }
+
+    // Update current track name
+    if (elements.syncCurrentTrack) {
+        elements.syncCurrentTrack.textContent = status.current_track || 'Waiting...';
+    }
+
+    // Update track counter
+    if (elements.syncCurrentNum) {
+        elements.syncCurrentNum.textContent = current;
+    }
+    if (elements.syncTotalNum) {
+        elements.syncTotalNum.textContent = total;
+    }
+
+    // Update download speed
+    if (elements.syncSpeed) {
+        const speedMbps = status.speed_mbps || 0;
+        elements.syncSpeed.textContent = speedMbps > 0 ? `${speedMbps.toFixed(1)} MB/s` : '0 MB/s';
+    }
+
+    // Calculate and update downloaded size
+    const avgSizeMb = 8; // ~8MB per track estimate
+    const downloadedMb = current * avgSizeMb;
+    const totalMb = total * avgSizeMb;
+
+    if (elements.syncDownloadedSize) {
+        elements.syncDownloadedSize.textContent = formatSize(downloadedMb * 1024 * 1024);
+    }
+    if (elements.syncTotalSize) {
+        elements.syncTotalSize.textContent = formatSize(totalMb * 1024 * 1024);
+    }
 
     // Calculate ETA
-    if (status.current > 0 && status.total > 0) {
-        const remaining = status.total - status.current;
-        const avgTimePerTrack = 30; // Rough estimate: 30 seconds per track
-        const etaSeconds = remaining * avgTimePerTrack;
-        elements.syncEta.textContent = formatTime(etaSeconds);
-    } else {
-        elements.syncEta.textContent = 'Calculating...';
+    if (elements.syncEta) {
+        if (current > 0 && total > 0) {
+            const remaining = total - current;
+            const avgTimePerTrack = 30; // Rough estimate: 30 seconds per track
+            const etaSeconds = remaining * avgTimePerTrack;
+            elements.syncEta.textContent = formatTime(etaSeconds);
+        } else {
+            elements.syncEta.textContent = 'Calculating...';
+        }
+    }
+
+    // Update progress summary counts
+    const doneCount = current;
+    const activeCount = status.is_syncing ? 1 : 0;
+    const leftCount = Math.max(total - current - activeCount, 0);
+
+    if (elements.syncDoneCount) {
+        elements.syncDoneCount.textContent = doneCount;
+    }
+    if (elements.syncActiveCount) {
+        elements.syncActiveCount.textContent = activeCount;
+    }
+    if (elements.syncLeftCount) {
+        elements.syncLeftCount.textContent = leftCount;
     }
 
     // Update progress ring
-    const circumference = 2 * Math.PI * 45; // radius = 45
-    const offset = circumference - (percent / 100) * circumference;
-    elements.progressCircle.style.strokeDashoffset = offset;
+    if (elements.progressCircle) {
+        const circumference = 2 * Math.PI * 45; // radius = 45
+        const offset = circumference - (percent / 100) * circumference;
+        elements.progressCircle.style.strokeDashoffset = offset;
+    }
 }
 
 async function cancelSync() {
@@ -491,4 +683,37 @@ function formatTime(seconds) {
         const mins = Math.floor((seconds % 3600) / 60);
         return mins > 0 ? `~${hours}h ${mins}m` : `~${hours}h`;
     }
+}
+
+function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const value = bytes / Math.pow(k, i);
+
+    // Use more precision for smaller values
+    if (i >= 2) { // MB and above
+        return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 1)} ${sizes[i]}`;
+    }
+    return `${Math.round(value)} ${sizes[i]}`;
+}
+
+function formatLastSync(timestamp) {
+    if (!timestamp) return 'Never';
+
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+
+    // Format as date for older entries
+    return date.toLocaleDateString();
 }

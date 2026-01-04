@@ -163,6 +163,23 @@ class StateManager:
     def get_track_count(self) -> int:
         """Get number of tracked tracks"""
         return len(self._data.get("tracks", []))
+
+    def get_avg_track_size_mb(self) -> float:
+        """Calculate average file size per track in MB"""
+        tracks = self._data.get("tracks", [])
+        if not tracks:
+            return 0.0
+        total_size = sum(track.get("file_size_mb", 0) for track in tracks)
+        return total_size / len(tracks)
+
+    def get_last_sync_time(self) -> Optional[str]:
+        """Get the timestamp of the last successful sync"""
+        return self._data.get("last_sync")
+
+    def set_last_sync_time(self):
+        """Update the last sync timestamp to now"""
+        self._data["last_sync"] = datetime.now().isoformat()
+        self.save()
     
     def _get_file_size(self, filename: str) -> float:
         """Get file size in MB"""
