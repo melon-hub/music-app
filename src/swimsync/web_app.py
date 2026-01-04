@@ -18,6 +18,7 @@ app = Flask(__name__,
             template_folder='web/templates',
             static_folder='web/static')
 app.secret_key = secrets.token_hex(32)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Global state
 config = None
@@ -36,7 +37,8 @@ sync_status = {
     "total_download_mb": 0,
     "completed_count": 0,
     "failed_count": 0,
-    "pending_count": 0
+    "pending_count": 0,
+    "failed_tracks": []  # List of track names that failed
 }
 sync_thread = None
 sync_lock = threading.Lock()
@@ -295,7 +297,8 @@ def start_sync():
             "total_download_mb": total_download_mb,
             "completed_count": 0,
             "failed_count": 0,
-            "pending_count": len(tracks_to_download)
+            "pending_count": len(tracks_to_download),
+            "failed_tracks": []
         }
 
     def progress_callback(current, total, track_name, status, extra=None):
@@ -308,14 +311,15 @@ def start_sync():
             sync_status["speed_mbps"] = extra.get("speed_mbps", 0)
             sync_status["file_size_mb"] = extra.get("file_size_mb", 0)
 
-            # Update download statistics
-            if extra.get("file_size_mb", 0) > 0 and status == "completed":
+            # Update download statistics (status values: "Downloading", "Downloaded", "Failed", "Deleting", "Deleted")
+            if status == "Downloaded":
                 sync_status["downloaded_mb"] += extra.get("file_size_mb", 0)
                 sync_status["completed_count"] += 1
                 sync_status["pending_count"] = total - current
-            elif status == "failed":
+            elif status == "Failed":
                 sync_status["failed_count"] += 1
                 sync_status["pending_count"] = total - current
+                sync_status["failed_tracks"].append(track_name)
 
     def sync_worker():
         global sync_status

@@ -7,6 +7,7 @@ Open http://localhost:5000 in your browser after starting.
 """
 
 import sys
+import os
 import webbrowser
 import threading
 import time
@@ -35,14 +36,15 @@ def main():
     print()
     print("Press Ctrl+C to stop the server")
     print()
-    
-    # Open browser in background thread
-    browser_thread = threading.Thread(target=open_browser, daemon=True)
-    browser_thread.start()
-    
-    # Start the server
+
+    # Only open browser on main process (not Flask reloader subprocess)
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        browser_thread = threading.Thread(target=open_browser, daemon=True)
+        browser_thread.start()
+
+    # Start the server (debug=True enables auto-reload for templates/code changes)
     try:
-        run_server(host='127.0.0.1', port=5000, debug=False)
+        run_server(host='127.0.0.1', port=5000, debug=True)
     except KeyboardInterrupt:
         print("\nServer stopped.")
 

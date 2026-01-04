@@ -170,7 +170,7 @@
                             <span class="breakdown-label">existing</span>
                             <span class="breakdown-size" id="breakdown-existing-size">(0 MB)</span>
                         </div>
-                        <div class="breakdown-item breakdown-new">
+                        <div class="breakdown-item breakdown-new" id="breakdown-new-item">
                             <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                                 <polyline points="7 10 12 15 17 10"/>
@@ -179,6 +179,15 @@
                             <span class="breakdown-count" id="breakdown-new-count">0</span>
                             <span class="breakdown-label">new</span>
                             <span class="breakdown-size" id="breakdown-new-size">(0 MB)</span>
+                        </div>
+                        <div class="breakdown-item breakdown-failed hidden" id="breakdown-failed-item">
+                            <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="15" y1="9" x2="9" y2="15"/>
+                                <line x1="9" y1="9" x2="15" y2="15"/>
+                            </svg>
+                            <span class="breakdown-count" id="breakdown-failed-count">0</span>
+                            <span class="breakdown-label">failed</span>
                         </div>
                         <div class="breakdown-item breakdown-removed">
                             <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -423,6 +432,25 @@
                 </div>
             </div>
         </aside>
+    </div>
+
+    <!-- Custom Modal -->
+    <div id="modal-overlay" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-icon" id="modal-icon">
+                    <!-- Icon inserted by JS -->
+                </div>
+                <h3 class="modal-title" id="modal-title">Title</h3>
+            </div>
+            <div class="modal-body">
+                <p class="modal-message" id="modal-message">Message</p>
+            </div>
+            <div class="modal-footer" id="modal-footer">
+                <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
+                <button class="btn btn-primary" id="modal-confirm-btn">OK</button>
+            </div>
+        </div>
     </div>
 
     <script src="/static/js/app.js"></script>

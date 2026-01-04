@@ -8,6 +8,132 @@ let syncPreview = null;
 let isSyncing = false;
 let syncPollInterval = null;
 let pollErrorCount = 0;
+let modalResolve = null;
+let failedTracks = [];  // Track names that failed to download
+
+// Modal Functions
+const modalElements = {
+    overlay: null,
+    title: null,
+    message: null,
+    icon: null,
+    footer: null,
+    confirmBtn: null,
+    cancelBtn: null
+};
+
+function initModal() {
+    modalElements.overlay = document.getElementById('modal-overlay');
+    modalElements.title = document.getElementById('modal-title');
+    modalElements.message = document.getElementById('modal-message');
+    modalElements.icon = document.getElementById('modal-icon');
+    modalElements.footer = document.getElementById('modal-footer');
+    modalElements.confirmBtn = document.getElementById('modal-confirm-btn');
+    modalElements.cancelBtn = document.getElementById('modal-cancel-btn');
+
+    // Check if modal elements exist
+    if (!modalElements.overlay) {
+        console.error('Modal overlay element not found - modal functionality disabled');
+        return;
+    }
+
+    // Close on overlay click
+    modalElements.overlay.addEventListener('click', (e) => {
+        if (e.target === modalElements.overlay) {
+            closeModal(false);
+        }
+    });
+
+    // Button handlers
+    modalElements.confirmBtn.addEventListener('click', () => closeModal(true));
+    modalElements.cancelBtn.addEventListener('click', () => closeModal(false));
+
+    // ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modalElements.overlay.classList.contains('hidden')) {
+            closeModal(false);
+        }
+    });
+}
+
+function getModalIcon(type) {
+    const icons = {
+        success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg>',
+        error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+        warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+        info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+        confirm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+    };
+    return icons[type] || icons.info;
+}
+
+function showModal(type, title, message) {
+    return new Promise((resolve) => {
+        // Fallback to native alert if modal not available
+        if (!modalElements.overlay) {
+            alert(`${title}\n\n${message}`);
+            resolve(true);
+            return;
+        }
+
+        modalResolve = resolve;
+
+        // Set content
+        modalElements.title.textContent = title;
+        modalElements.message.textContent = message;
+
+        // Set icon
+        modalElements.icon.innerHTML = getModalIcon(type);
+        modalElements.icon.className = 'modal-icon modal-icon-' + type;
+
+        // Show only OK button for alerts
+        modalElements.cancelBtn.classList.add('hidden');
+        modalElements.confirmBtn.textContent = 'OK';
+
+        // Show modal
+        modalElements.overlay.classList.remove('hidden');
+        modalElements.confirmBtn.focus();
+    });
+}
+
+function showConfirm(title, message) {
+    return new Promise((resolve) => {
+        // Fallback to native confirm if modal not available
+        if (!modalElements.overlay) {
+            resolve(confirm(`${title}\n\n${message}`));
+            return;
+        }
+
+        modalResolve = resolve;
+
+        // Set content
+        modalElements.title.textContent = title;
+        modalElements.message.textContent = message;
+
+        // Set icon
+        modalElements.icon.innerHTML = getModalIcon('confirm');
+        modalElements.icon.className = 'modal-icon modal-icon-warning';
+
+        // Show both buttons for confirms
+        modalElements.cancelBtn.classList.remove('hidden');
+        modalElements.confirmBtn.textContent = 'Confirm';
+        modalElements.cancelBtn.textContent = 'Cancel';
+
+        // Show modal
+        modalElements.overlay.classList.remove('hidden');
+        modalElements.confirmBtn.focus();
+    });
+}
+
+function closeModal(result) {
+    if (modalElements.overlay) {
+        modalElements.overlay.classList.add('hidden');
+    }
+    if (modalResolve) {
+        modalResolve(result);
+        modalResolve = null;
+    }
+}
 
 // DOM Elements
 const elements = {
@@ -39,6 +165,9 @@ const elements = {
     breakdownExistingSize: document.getElementById('breakdown-existing-size'),
     breakdownNewCount: document.getElementById('breakdown-new-count'),
     breakdownNewSize: document.getElementById('breakdown-new-size'),
+    breakdownNewItem: document.getElementById('breakdown-new-item'),
+    breakdownFailedCount: document.getElementById('breakdown-failed-count'),
+    breakdownFailedItem: document.getElementById('breakdown-failed-item'),
     breakdownRemovedCount: document.getElementById('breakdown-removed-count'),
 
     // Storage (enhanced storage card)
@@ -89,6 +218,7 @@ const elements = {
 document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
+    initModal();
     setupEventListeners();
     await loadConfig();
     await updateStorageDisplay();
@@ -112,7 +242,7 @@ function setupEventListeners() {
 
     // Browse folder (note: web browsers can't access local filesystem directly)
     elements.browseBtn.addEventListener('click', () => {
-        alert('Folder selection is managed through the Settings page.\nThe output folder path is configured on the server.');
+        showModal('info', 'Folder Settings', 'Folder selection is managed through the Settings page. The output folder path is configured on the server.');
     });
 
     // Sync actions
@@ -153,7 +283,7 @@ async function loadConfig() {
         const response = await fetch('/api/config');
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            alert(`Failed to load configuration: ${data.error || response.statusText}`);
+            await showModal('error', 'Configuration Error', `Failed to load configuration: ${data.error || response.statusText}`);
             return;
         }
         const config = await response.json();
@@ -168,7 +298,7 @@ async function loadConfig() {
         elements.settingTimeout.value = config.download_timeout;
     } catch (error) {
         console.error('Failed to load config:', error);
-        alert(`Failed to load configuration: ${error.message}`);
+        await showModal('error', 'Configuration Error', `Failed to load configuration: ${error.message}`);
     }
 }
 
@@ -176,12 +306,12 @@ async function loadPlaylist() {
     const url = elements.playlistUrl.value.trim();
 
     if (!url) {
-        alert('Please enter a Spotify playlist URL');
+        await showModal('warning', 'Missing URL', 'Please enter a Spotify playlist URL');
         return;
     }
 
     if (!url.includes('open.spotify.com/playlist')) {
-        alert('Please enter a valid Spotify playlist URL');
+        await showModal('warning', 'Invalid URL', 'Please enter a valid Spotify playlist URL');
         return;
     }
 
@@ -212,7 +342,7 @@ async function loadPlaylist() {
         updateSyncSummary();
 
     } catch (error) {
-        alert(`Error: ${error.message}`);
+        await showModal('error', 'Load Failed', error.message);
         elements.emptyState.classList.remove('hidden');
     } finally {
         elements.loadingState.classList.add('hidden');
@@ -239,6 +369,13 @@ function displayPlaylist(data) {
     allTracks.forEach(track => {
         const row = document.createElement('tr');
 
+        // Check if this track failed to download (track name format: "title - artist")
+        const trackKey = `${track.title} - ${track.artist}`;
+        const isFailed = failedTracks.some(failedName =>
+            failedName.includes(track.title) || trackKey.includes(failedName.split(' - ')[0])
+        );
+        const displayStatus = (isFailed && track.status === 'new') ? 'failed' : track.status;
+
         const titleCell = document.createElement('td');
         titleCell.textContent = track.title;
         row.appendChild(titleCell);
@@ -249,8 +386,8 @@ function displayPlaylist(data) {
 
         const statusCell = document.createElement('td');
         const badge = document.createElement('span');
-        badge.className = `status-badge status-${track.status}`;
-        badge.textContent = getStatusLabel(track.status);
+        badge.className = `status-badge status-${displayStatus}`;
+        badge.textContent = getStatusLabel(displayStatus);
         statusCell.appendChild(badge);
         row.appendChild(statusCell);
 
@@ -301,6 +438,12 @@ function updatePlaylistStats(data) {
         elements.statAvgSize.textContent = `~${avgSizeMb} MB`;
     }
 
+    // Count failed tracks from the failedTracks array
+    const failedTrackCount = failedTracks.length;
+
+    // Calculate actual new count (excluding failed tracks)
+    const actualNewCount = Math.max((newCount + suspectCount) - failedTrackCount, 0);
+
     // Update breakdown
     if (elements.breakdownExistingCount) {
         elements.breakdownExistingCount.textContent = existingCount;
@@ -308,12 +451,34 @@ function updatePlaylistStats(data) {
     if (elements.breakdownExistingSize) {
         elements.breakdownExistingSize.textContent = `(${formatSize(existingSizeMb * 1024 * 1024)})`;
     }
-    if (elements.breakdownNewCount) {
-        elements.breakdownNewCount.textContent = newCount + suspectCount;
+
+    // Show/hide new vs failed breakdown items
+    if (elements.breakdownNewItem) {
+        if (actualNewCount > 0) {
+            elements.breakdownNewItem.classList.remove('hidden');
+            if (elements.breakdownNewCount) {
+                elements.breakdownNewCount.textContent = actualNewCount;
+            }
+            if (elements.breakdownNewSize) {
+                const actualNewSizeMb = actualNewCount * avgSizeMb;
+                elements.breakdownNewSize.textContent = `(${formatSize(actualNewSizeMb * 1024 * 1024)})`;
+            }
+        } else {
+            elements.breakdownNewItem.classList.add('hidden');
+        }
     }
-    if (elements.breakdownNewSize) {
-        elements.breakdownNewSize.textContent = `(${formatSize(newSizeMb * 1024 * 1024)})`;
+
+    if (elements.breakdownFailedItem) {
+        if (failedTrackCount > 0) {
+            elements.breakdownFailedItem.classList.remove('hidden');
+            if (elements.breakdownFailedCount) {
+                elements.breakdownFailedCount.textContent = failedTrackCount;
+            }
+        } else {
+            elements.breakdownFailedItem.classList.add('hidden');
+        }
     }
+
     if (elements.breakdownRemovedCount) {
         elements.breakdownRemovedCount.textContent = removedCount;
     }
@@ -329,7 +494,8 @@ function getStatusLabel(status) {
         'new': 'New',
         'exists': 'Exists',
         'removed': 'Removed',
-        'suspect': 'Suspect'
+        'suspect': 'Suspect',
+        'failed': 'Failed'
     };
     return labels[status] || status;
 }
@@ -349,7 +515,7 @@ async function updateStorageDisplay(storage = null) {
             const response = await fetch('/api/storage');
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
-                alert(`Failed to load storage info: ${data.error || response.statusText}`);
+                await showModal('error', 'Storage Error', `Failed to load storage info: ${data.error || response.statusText}`);
                 return;
             }
             storage = await response.json();
@@ -361,14 +527,16 @@ async function updateStorageDisplay(storage = null) {
         const limitMb = limitGb * 1024;
         const percent = Math.min((usedGb / limitGb) * 100, 100);
 
-        // Calculate after-sync values based on current sync preview
+        // Calculate after-sync values based on current sync preview (excluding failed tracks)
         let afterSyncMb = usedMb;
         let deltaMb = 0;
         if (syncPreview) {
             const newCount = (syncPreview.new ? syncPreview.new.length : 0) +
                              (syncPreview.suspect ? syncPreview.suspect.length : 0);
+            // Subtract failed tracks from the estimate
+            const actualNewCount = Math.max(newCount - failedTracks.length, 0);
             const avgSizeMb = 8; // ~8MB per track estimate
-            deltaMb = newCount * avgSizeMb;
+            deltaMb = actualNewCount * avgSizeMb;
             afterSyncMb = usedMb + deltaMb;
         }
 
@@ -432,7 +600,7 @@ async function updateStorageDisplay(storage = null) {
 
     } catch (error) {
         console.error('Failed to update storage:', error);
-        alert(`Failed to load storage info: ${error.message}`);
+        await showModal('error', 'Storage Error', `Failed to load storage info: ${error.message}`);
     }
 }
 
@@ -443,7 +611,8 @@ async function startSync() {
 
     // Confirm deletion
     if (deleteRemoved && syncPreview.removed.length > 0) {
-        if (!confirm(`This will delete ${syncPreview.removed.length} track(s) that were removed from the playlist.\n\nContinue?`)) {
+        const confirmed = await showConfirm('Confirm Deletion', `This will delete ${syncPreview.removed.length} track(s) that were removed from the playlist. Continue?`);
+        if (!confirmed) {
             return;
         }
     }
@@ -479,7 +648,7 @@ async function startSync() {
         syncPollInterval = setInterval(pollSyncStatus, 500);
 
     } catch (error) {
-        alert(`Error: ${error.message}`);
+        await showModal('error', 'Sync Failed', error.message);
         resetSyncState();
     }
 }
@@ -492,7 +661,7 @@ async function pollSyncStatus() {
             console.error(`Failed to poll sync status (attempt ${pollErrorCount}):`, response.statusText);
             if (pollErrorCount >= 3) {
                 clearInterval(syncPollInterval);
-                alert('Lost connection to server');
+                showModal('error', 'Connection Lost', 'Lost connection to server');
                 resetSyncState();
             }
             return;
@@ -508,16 +677,34 @@ async function pollSyncStatus() {
         if (!status.is_syncing) {
             clearInterval(syncPollInterval);
 
-            if (status.status === 'completed') {
-                alert('Sync completed successfully!');
-            } else if (status.status === 'error') {
-                alert(`Sync failed: ${status.error}`);
-            } else if (status.status === 'cancelled') {
-                alert('Sync was cancelled');
-            }
-
             resetSyncState();
             await updateStorageDisplay();
+
+            if (status.status === 'completed') {
+                // Store failed tracks for display
+                failedTracks = status.failed_tracks || [];
+
+                // Refresh playlist first to update track statuses
+                if (elements.playlistUrl.value.trim()) {
+                    await loadPlaylist();
+                }
+
+                // Show appropriate message based on failed downloads
+                const failedCount = status.failed_count || 0;
+                const completedCount = status.completed_count || 0;
+
+                if (failedCount > 0 && completedCount === 0) {
+                    await showModal('error', 'Sync Failed', `All ${failedCount} download(s) failed. The tracks may not be available.`);
+                } else if (failedCount > 0) {
+                    await showModal('warning', 'Sync Completed with Errors', `${completedCount} track(s) downloaded, ${failedCount} failed. Some tracks may not be available on YouTube.`);
+                } else {
+                    await showModal('success', 'Sync Complete', 'Sync completed successfully!');
+                }
+            } else if (status.status === 'error') {
+                showModal('error', 'Sync Failed', status.error);
+            } else if (status.status === 'cancelled') {
+                showModal('info', 'Sync Cancelled', 'Sync was cancelled');
+            }
         }
 
     } catch (error) {
@@ -525,7 +712,7 @@ async function pollSyncStatus() {
         console.error(`Failed to poll sync status (attempt ${pollErrorCount}):`, error);
         if (pollErrorCount >= 3) {
             clearInterval(syncPollInterval);
-            alert('Lost connection to server');
+            showModal('error', 'Connection Lost', 'Lost connection to server');
             resetSyncState();
         }
     }
@@ -534,19 +721,32 @@ async function pollSyncStatus() {
 function updateSyncProgress(status) {
     const current = status.current || 0;
     const total = status.total || 0;
-    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    const completed = (status.completed_count || 0) + (status.failed_count || 0);
+
+    // Calculate percent based on completed tracks, not current track being processed
+    // This prevents showing 100% while a track is still downloading
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    // Determine display text based on status
+    const isDownloading = status.status === 'Downloading';
+    const displayText = isDownloading ? `${percent}%` : `${percent}%`;
+    const statusText = isDownloading ? `Downloading...` : (status.current_track || 'Waiting...');
 
     // Update percentage displays
     if (elements.syncPercent) {
-        elements.syncPercent.textContent = `${percent}%`;
+        elements.syncPercent.textContent = displayText;
     }
     if (elements.syncPercentInner) {
-        elements.syncPercentInner.textContent = `${percent}%`;
+        elements.syncPercentInner.textContent = displayText;
     }
 
-    // Update current track name
+    // Update current track name with status indicator
     if (elements.syncCurrentTrack) {
-        elements.syncCurrentTrack.textContent = status.current_track || 'Waiting...';
+        if (isDownloading && status.current_track) {
+            elements.syncCurrentTrack.textContent = `⏳ ${status.current_track}`;
+        } else {
+            elements.syncCurrentTrack.textContent = status.current_track || 'Waiting...';
+        }
     }
 
     // Update track counter
@@ -563,9 +763,9 @@ function updateSyncProgress(status) {
         elements.syncSpeed.textContent = speedMbps > 0 ? `${speedMbps.toFixed(1)} MB/s` : '0 MB/s';
     }
 
-    // Calculate and update downloaded size
+    // Calculate and update downloaded size (use completed count, not current)
     const avgSizeMb = 8; // ~8MB per track estimate
-    const downloadedMb = current * avgSizeMb;
+    const downloadedMb = completed * avgSizeMb;
     const totalMb = total * avgSizeMb;
 
     if (elements.syncDownloadedSize) {
@@ -575,22 +775,23 @@ function updateSyncProgress(status) {
         elements.syncTotalSize.textContent = formatSize(totalMb * 1024 * 1024);
     }
 
-    // Calculate ETA
+    // Calculate ETA based on remaining tracks
     if (elements.syncEta) {
-        if (current > 0 && total > 0) {
-            const remaining = total - current;
+        const remaining = total - completed;
+        if (remaining > 0) {
             const avgTimePerTrack = 30; // Rough estimate: 30 seconds per track
             const etaSeconds = remaining * avgTimePerTrack;
             elements.syncEta.textContent = formatTime(etaSeconds);
         } else {
-            elements.syncEta.textContent = 'Calculating...';
+            elements.syncEta.textContent = '~0s';
         }
     }
 
-    // Update progress summary counts
-    const doneCount = current;
-    const activeCount = status.is_syncing ? 1 : 0;
-    const leftCount = Math.max(total - current - activeCount, 0);
+    // Update progress summary counts using actual completed/failed counts
+    const doneCount = status.completed_count || 0;
+    const failedCount = status.failed_count || 0;
+    const activeCount = isDownloading ? 1 : 0;
+    const leftCount = Math.max(total - completed - activeCount, 0);
 
     if (elements.syncDoneCount) {
         elements.syncDoneCount.textContent = doneCount;
@@ -617,11 +818,11 @@ async function cancelSync() {
         const response = await fetch('/api/sync/cancel', { method: 'POST' });
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            alert(`Failed to cancel sync: ${data.error || response.statusText}`);
+            await showModal('error', 'Cancel Failed', `Failed to cancel sync: ${data.error || response.statusText}`);
         }
     } catch (error) {
         console.error('Failed to cancel sync:', error);
-        alert(`Failed to cancel sync: ${error.message}`);
+        await showModal('error', 'Cancel Failed', `Failed to cancel sync: ${error.message}`);
     }
 }
 
@@ -652,15 +853,15 @@ async function saveSettings() {
         });
 
         if (response.ok) {
-            alert('Settings saved successfully!');
+            await showModal('success', 'Settings Saved', 'Settings saved successfully!');
             await updateStorageDisplay();
         } else {
             const data = await response.json().catch(() => ({}));
-            alert(`Failed to save settings: ${data.error || response.statusText}`);
+            await showModal('error', 'Save Failed', `Failed to save settings: ${data.error || response.statusText}`);
         }
 
     } catch (error) {
-        alert(`Error: ${error.message}`);
+        await showModal('error', 'Save Failed', error.message);
     }
 }
 

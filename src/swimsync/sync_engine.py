@@ -427,13 +427,17 @@ class SyncEngine:
 
         cmd = [
             self._spotdl_path,
+            "download",
+            query,
             "--output", output_template,
             "--format", "mp3",
             "--bitrate", self.config.get("bitrate"),
-            query
         ]
 
         try:
+            # Log the command being run
+            print(f"[spotDL] Running: {' '.join(cmd)}")
+
             self._current_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -445,6 +449,12 @@ class SyncEngine:
             stdout, stderr = self._current_process.communicate(timeout=timeout)
 
             self._current_process = None
+
+            # Log spotDL output for debugging
+            if stdout.strip():
+                print(f"[spotDL stdout] {stdout.strip()}")
+            if stderr.strip():
+                print(f"[spotDL stderr] {stderr.strip()}")
 
             # Check if file was created and get size
             expected_file = output_folder / self._generate_filename(track)

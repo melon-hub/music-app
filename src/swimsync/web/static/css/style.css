@@ -502,6 +502,11 @@ html, body {
     color: var(--color-warning);
 }
 
+.status-failed {
+    background: var(--color-danger-bg);
+    color: var(--color-danger);
+}
+
 /* ==================== PLAYLIST STATS CARD ==================== */
 .stats-card {
     background: var(--color-card);
@@ -598,6 +603,10 @@ html, body {
 }
 
 .breakdown-removed .breakdown-icon {
+    color: var(--color-danger);
+}
+
+.breakdown-failed .breakdown-icon {
     color: var(--color-danger);
 }
 
@@ -1185,6 +1194,121 @@ html, body {
 .toggle-label:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
+}
+
+/* ==================== CUSTOM MODAL ==================== */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-normal), visibility var(--transition-normal);
+}
+
+.modal-overlay:not(.hidden) {
+    opacity: 1;
+    visibility: visible;
+}
+
+.modal {
+    background: var(--color-card);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--color-border);
+    width: 100%;
+    max-width: 420px;
+    margin: var(--spacing-lg);
+    transform: scale(0.95) translateY(-10px);
+    transition: transform var(--transition-normal);
+}
+
+.modal-overlay:not(.hidden) .modal {
+    transform: scale(1) translateY(0);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.modal-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.modal-icon.modal-icon-success {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--color-success);
+}
+
+.modal-icon.modal-icon-error {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--color-danger);
+}
+
+.modal-icon.modal-icon-warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--color-warning);
+}
+
+.modal-icon.modal-icon-info {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--color-info);
+}
+
+.modal-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.modal-body {
+    padding: var(--spacing-lg);
+}
+
+.modal-message {
+    font-size: var(--font-size-md);
+    color: var(--color-text-secondary);
+    line-height: var(--line-height-relaxed);
+    margin: 0;
+    white-space: pre-line;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.modal-footer .btn {
+    min-width: 80px;
 }
 
 /* ==================== REDUCED MOTION ==================== */
