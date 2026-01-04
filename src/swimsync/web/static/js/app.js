@@ -2,6 +2,16 @@
  * Swim Sync Web UI - Application Logic
  */
 
+// Accessibility: Announce status updates to screen readers
+function announceToScreenReader(message) {
+    const announcer = document.getElementById('status-announcer');
+    if (announcer) {
+        announcer.textContent = message;
+        // Clear after announcement to allow repeated messages
+        setTimeout(() => { announcer.textContent = ''; }, 1000);
+    }
+}
+
 // State
 let currentPlaylist = null;
 let syncPreview = null;
@@ -10,6 +20,10 @@ let syncPollInterval = null;
 let pollErrorCount = 0;
 let modalResolve = null;
 let failedTracks = [];  // Track names that failed to download
+
+// Multi-playlist state (v2)
+let playlists = [];
+let currentPlaylistId = null;
 
 // Modal Functions
 const modalElements = {
@@ -52,6 +66,23 @@ function initModal() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !modalElements.overlay.classList.contains('hidden')) {
             closeModal(false);
+        }
+    });
+
+    // Focus trap for modal (Tab cycles within modal)
+    modalElements.overlay.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+
+        const focusable = modalElements.overlay.querySelectorAll('button:not([disabled])');
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
         }
     });
 }
@@ -145,7 +176,7 @@ const elements = {
     playlistUrl: document.getElementById('playlist-url'),
     loadBtn: document.getElementById('load-btn'),
     outputFolder: document.getElementById('output-folder'),
-    browseBtn: document.getElementById('browse-btn'),
+    openFolderBtn: document.getElementById('open-folder-btn'),
 
     // Playlist
     emptyState: document.getElementById('empty-state'),
@@ -169,6 +200,8 @@ const elements = {
     breakdownFailedCount: document.getElementById('breakdown-failed-count'),
     breakdownFailedItem: document.getElementById('breakdown-failed-item'),
     breakdownRemovedCount: document.getElementById('breakdown-removed-count'),
+    breakdownRemovedItem: document.getElementById('breakdown-removed-item'),
+    syncStatusText: document.getElementById('sync-status-text'),
 
     // Storage (enhanced storage card)
     storageUsed: document.getElementById('storage-used'),
@@ -211,7 +244,71 @@ const elements = {
     librarySize: document.getElementById('library-size'),
     libraryAvgSize: document.getElementById('library-avg-size'),
     libraryLastSync: document.getElementById('library-last-sync'),
-    libraryDeviceCapacity: document.getElementById('library-device-capacity')
+    libraryDeviceCapacity: document.getElementById('library-device-capacity'),
+
+    // Playlist sidebar
+    playlistList: document.getElementById('playlist-list'),
+    addPlaylistBtn: document.getElementById('add-playlist-btn'),
+
+    // Save to library button
+    savePlaylistBtn: document.getElementById('save-playlist-btn'),
+
+    // New UX elements
+    welcomeState: document.getElementById('welcome-state'),
+    libraryOverview: document.getElementById('library-overview'),
+    playlistDetail: document.getElementById('playlist-detail'),
+    welcomeAddBtn: document.getElementById('welcome-add-btn'),
+    overviewAddBtn: document.getElementById('overview-add-btn'),
+    libraryPlaylistGrid: document.getElementById('library-playlist-grid'),
+    overviewPlaylistCount: document.getElementById('overview-playlist-count'),
+    overviewTrackCount: document.getElementById('overview-track-count'),
+    overviewStorageUsed: document.getElementById('overview-storage-used'),
+
+    // Playlist detail header
+    playlistDetailName: document.getElementById('playlist-detail-name'),
+    playlistDetailUrl: document.getElementById('playlist-detail-url'),
+    playlistDetailColor: document.getElementById('playlist-detail-color'),
+    deletePlaylistBtn: document.getElementById('delete-playlist-btn'),
+
+    // Sync confirm modal
+    syncConfirmOverlay: document.getElementById('sync-confirm-overlay'),
+    syncConfirmCancel: document.getElementById('sync-confirm-cancel'),
+    syncConfirmStart: document.getElementById('sync-confirm-start'),
+    syncNewCount: document.getElementById('sync-new-count'),
+    syncNewCount2: document.getElementById('sync-new-count-2'),
+    syncRemovedCount: document.getElementById('sync-removed-count'),
+    syncSummaryNew: document.getElementById('sync-summary-new'),
+    syncSummaryRemoved: document.getElementById('sync-summary-removed'),
+    syncSummaryRemovedRow: document.getElementById('sync-summary-removed-row'),
+    syncSummaryDownloadSize: document.getElementById('sync-summary-download-size'),
+    syncModeRadios: document.querySelectorAll('input[name="sync-mode"]'),
+
+    // Wizard elements
+    wizardOverlay: document.getElementById('wizard-overlay'),
+    wizardCloseBtn: document.getElementById('wizard-close-btn'),
+    wizardBackBtn: document.getElementById('wizard-back-btn'),
+    wizardNextBtn: document.getElementById('wizard-next-btn'),
+    wizardUrl: document.getElementById('wizard-url'),
+    wizardName: document.getElementById('wizard-name'),
+    wizardPlaylistName: document.getElementById('wizard-playlist-name'),
+    wizardPlaylistTracks: document.getElementById('wizard-playlist-tracks'),
+    wizardSummaryName: document.getElementById('wizard-summary-name'),
+    wizardSummaryTracks: document.getElementById('wizard-summary-tracks'),
+    wizardSummarySize: document.getElementById('wizard-summary-size'),
+    wizardDownloadNow: document.getElementById('wizard-download-now'),
+    wizardSteps: document.querySelectorAll('.wizard-step'),
+    wizardContents: document.querySelectorAll('.wizard-content'),
+    wizardColorBtns: document.querySelectorAll('.wizard-color-btn')
+};
+
+// Wizard state
+let wizardStep = 1;
+let wizardData = {
+    url: '',
+    name: '',
+    color: '#22c55e',
+    tracks: 0,
+    playlistInfo: null
 };
 
 // Initialize
@@ -220,8 +317,17 @@ document.addEventListener('DOMContentLoaded', init);
 async function init() {
     initModal();
     setupEventListeners();
+    setupWizard();
+
+    // Sync button starts disabled until playlist is loaded from Spotify
+    if (elements.syncBtn) {
+        elements.syncBtn.disabled = true;
+    }
+
     await loadConfig();
+    await loadPlaylists();
     await updateStorageDisplay();
+    determineInitialView();
 }
 
 function setupEventListeners() {
@@ -240,17 +346,43 @@ function setupEventListeners() {
         if (e.key === 'Enter') loadPlaylist();
     });
 
-    // Browse folder (note: web browsers can't access local filesystem directly)
-    elements.browseBtn.addEventListener('click', () => {
-        showModal('info', 'Folder Settings', 'Folder selection is managed through the Settings page. The output folder path is configured on the server.');
-    });
+    // Open folder in file explorer
+    if (elements.openFolderBtn) {
+        elements.openFolderBtn.addEventListener('click', openPlaylistFolder);
+    }
 
     // Sync actions
-    elements.syncBtn.addEventListener('click', startSync);
+    elements.syncBtn.addEventListener('click', showSyncConfirmModal);
     elements.cancelBtn.addEventListener('click', cancelSync);
+
+    // Sync confirm modal
+    setupSyncConfirmModal();
 
     // Settings
     elements.saveSettingsBtn.addEventListener('click', saveSettings);
+
+    // Playlist sidebar
+    if (elements.addPlaylistBtn) {
+        elements.addPlaylistBtn.addEventListener('click', openWizard);
+    }
+
+    // Save to library button
+    if (elements.savePlaylistBtn) {
+        elements.savePlaylistBtn.addEventListener('click', savePlaylistToLibrary);
+    }
+
+    // Welcome/Overview add buttons
+    if (elements.welcomeAddBtn) {
+        elements.welcomeAddBtn.addEventListener('click', openWizard);
+    }
+    if (elements.overviewAddBtn) {
+        elements.overviewAddBtn.addEventListener('click', openWizard);
+    }
+
+    // Delete playlist button
+    if (elements.deletePlaylistBtn) {
+        elements.deletePlaylistBtn.addEventListener('click', handleDeleteCurrentPlaylist);
+    }
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -267,7 +399,13 @@ function setupEventListeners() {
 function switchView(viewName) {
     // Update nav
     elements.navItems.forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewName);
+        const isActive = item.dataset.view === viewName;
+        item.classList.toggle('active', isActive);
+        if (isActive) {
+            item.setAttribute('aria-current', 'page');
+        } else {
+            item.removeAttribute('aria-current');
+        }
     });
 
     // Update views
@@ -275,6 +413,11 @@ function switchView(viewName) {
         view.classList.toggle('active', view.id === `${viewName}-view`);
         view.classList.toggle('hidden', view.id !== `${viewName}-view`);
     });
+
+    // When switching to dashboard, determine appropriate sub-view
+    if (viewName === 'dashboard') {
+        determineInitialView();
+    }
 }
 
 // API Functions
@@ -299,6 +442,26 @@ async function loadConfig() {
     } catch (error) {
         console.error('Failed to load config:', error);
         await showModal('error', 'Configuration Error', `Failed to load configuration: ${error.message}`);
+    }
+}
+
+async function openPlaylistFolder() {
+    if (!currentPlaylistId) {
+        await showModal('info', 'No Playlist Selected', 'Please select or create a playlist first.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/playlists/${currentPlaylistId}/open-folder`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            await showModal('error', 'Error', data.error || 'Failed to open folder');
+        }
+    } catch (error) {
+        await showModal('error', 'Error', 'Failed to open folder: ' + error.message);
     }
 }
 
@@ -341,6 +504,9 @@ async function loadPlaylist() {
         updateStorageDisplay(data.storage);
         updateSyncSummary();
 
+        // Refresh sidebar counts (stats may have been updated by manifest sync)
+        await loadPlaylists();
+
     } catch (error) {
         await showModal('error', 'Load Failed', error.message);
         elements.emptyState.classList.remove('hidden');
@@ -353,6 +519,11 @@ async function loadPlaylist() {
 function displayPlaylist(data) {
     elements.playlistName.textContent = data.playlist_name;
     elements.trackCount.textContent = `${data.tracks.length} tracks`;
+
+    // Update folder path to show playlist-specific folder
+    if (elements.outputFolder && data.playlist_folder) {
+        elements.outputFolder.value = data.playlist_folder;
+    }
 
     // Clear track list using safe DOM method
     while (elements.trackList.firstChild) {
@@ -399,10 +570,63 @@ function displayPlaylist(data) {
     // Update playlist stats card
     updatePlaylistStats(data);
 
+    // Update button states and text based on whether this playlist is in library
+    const url = elements.playlistUrl.value.trim();
+    const inLibrary = isPlaylistInLibrary(url);
+    const newCount = data.preview.new.length + data.preview.suspect.length;
+    const removedCount = data.preview.removed.length;
+
+    if (elements.savePlaylistBtn) {
+        if (inLibrary) {
+            elements.savePlaylistBtn.classList.add('hidden');
+        } else {
+            elements.savePlaylistBtn.classList.remove('hidden');
+        }
+    }
+
+    // Update Load/Refresh button text
+    if (elements.loadBtn) {
+        if (inLibrary) {
+            elements.loadBtn.textContent = 'Check for Updates';
+        } else {
+            elements.loadBtn.textContent = 'Load Playlist';
+        }
+    }
+
+    // Update Sync button text with count
+    if (elements.syncBtn) {
+        if (newCount > 0) {
+            elements.syncBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Download ${newCount} Track${newCount !== 1 ? 's' : ''}
+            `;
+        } else if (removedCount > 0) {
+            elements.syncBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <polyline points="1 20 1 14 7 14"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                Sync Changes
+            `;
+        } else {
+            elements.syncBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                Up to Date
+            `;
+        }
+    }
+
     // Enable sync button if there's work to do
-    const hasWork = data.preview.new.length > 0 ||
-                    data.preview.suspect.length > 0 ||
-                    (data.preview.removed.length > 0 && elements.deleteRemovedToggle.checked);
+    const hasWork = newCount > 0 ||
+                    (removedCount > 0 && elements.deleteRemovedToggle.checked);
     elements.syncBtn.disabled = !hasWork;
 }
 
@@ -481,6 +705,43 @@ function updatePlaylistStats(data) {
 
     if (elements.breakdownRemovedCount) {
         elements.breakdownRemovedCount.textContent = removedCount;
+    }
+
+    // Show/hide removed item based on count
+    if (elements.breakdownRemovedItem) {
+        if (removedCount > 0) {
+            elements.breakdownRemovedItem.classList.remove('hidden');
+        } else {
+            elements.breakdownRemovedItem.classList.add('hidden');
+        }
+    }
+
+    // Generate natural language summary
+    if (elements.syncStatusText) {
+        let summary = '';
+        const libraryTotal = existingCount + removedCount;
+
+        if (existingCount === totalTracks && actualNewCount === 0) {
+            // Fully synced
+            summary = `<strong>All ${totalTracks} tracks</strong> are downloaded and ready to sync to your device.`;
+        } else if (existingCount === 0 && actualNewCount === totalTracks) {
+            // New playlist, nothing downloaded
+            summary = `This playlist has <strong>${totalTracks} tracks</strong>. Download them to add to your library.`;
+        } else if (actualNewCount > 0) {
+            // Partially synced, has new tracks
+            summary = `You have <strong>${existingCount} of ${totalTracks}</strong> Spotify tracks. `;
+            summary += `<span class="highlight-new">${actualNewCount} new</span> to download.`;
+        } else {
+            // All tracks exist
+            summary = `You have <strong>${existingCount} of ${totalTracks}</strong> Spotify tracks downloaded.`;
+        }
+
+        // Add library context if there are removed tracks (explains sidebar count)
+        if (removedCount > 0) {
+            summary += `<br><span class="highlight-removed">Your library has <strong>${libraryTotal}</strong> tracks total — ${removedCount} are no longer on this Spotify playlist.</span>`;
+        }
+
+        elements.syncStatusText.innerHTML = summary;
     }
 
     // Show the stats card
@@ -694,10 +955,13 @@ async function pollSyncStatus() {
                 const completedCount = status.completed_count || 0;
 
                 if (failedCount > 0 && completedCount === 0) {
+                    announceToScreenReader(`Download failed. All ${failedCount} tracks failed.`);
                     await showModal('error', 'Sync Failed', `All ${failedCount} download(s) failed. The tracks may not be available.`);
                 } else if (failedCount > 0) {
+                    announceToScreenReader(`Download complete. ${completedCount} tracks downloaded, ${failedCount} failed.`);
                     await showModal('warning', 'Sync Completed with Errors', `${completedCount} track(s) downloaded, ${failedCount} failed. Some tracks may not be available on YouTube.`);
                 } else {
+                    announceToScreenReader('Download complete. All tracks downloaded successfully.');
                     await showModal('success', 'Sync Complete', 'Sync completed successfully!');
                 }
             } else if (status.status === 'error') {
@@ -729,8 +993,7 @@ function updateSyncProgress(status) {
 
     // Determine display text based on status
     const isDownloading = status.status === 'Downloading';
-    const displayText = isDownloading ? `${percent}%` : `${percent}%`;
-    const statusText = isDownloading ? `Downloading...` : (status.current_track || 'Waiting...');
+    const displayText = `${percent}%`;
 
     // Update percentage displays
     if (elements.syncPercent) {
@@ -893,9 +1156,10 @@ function formatSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     const value = bytes / Math.pow(k, i);
 
-    // Use more precision for smaller values
-    if (i >= 2) { // MB and above
-        return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 1)} ${sizes[i]}`;
+    // Use more precision for larger units (MB and above)
+    if (i >= 2) {
+        const decimals = value >= 100 ? 0 : 1;
+        return `${value.toFixed(decimals)} ${sizes[i]}`;
     }
     return `${Math.round(value)} ${sizes[i]}`;
 }
@@ -917,4 +1181,769 @@ function formatLastSync(timestamp) {
 
     // Format as date for older entries
     return date.toLocaleDateString();
+}
+
+// Playlist Management Functions (v2)
+async function loadPlaylists() {
+    try {
+        const response = await fetch('/api/playlists');
+        if (!response.ok) {
+            // Silently fail if endpoint doesn't exist (v1 mode)
+            console.log('Playlists endpoint not available (v1 mode)');
+            return;
+        }
+
+        const data = await response.json();
+        playlists = data.playlists || [];
+        currentPlaylistId = data.current_playlist_id || null;
+
+        renderPlaylistNav();
+    } catch (error) {
+        console.log('Failed to load playlists:', error.message);
+    }
+}
+
+function renderPlaylistNav() {
+    if (!elements.playlistList) return;
+
+    // Clear existing items
+    while (elements.playlistList.firstChild) {
+        elements.playlistList.removeChild(elements.playlistList.firstChild);
+    }
+
+    if (playlists.length === 0) {
+        const emptyMsg = document.createElement('div');
+        emptyMsg.className = 'playlist-nav-empty';
+        emptyMsg.textContent = 'No playlists yet';
+        elements.playlistList.appendChild(emptyMsg);
+        return;
+    }
+
+    playlists.forEach(playlist => {
+        const item = document.createElement('div');
+        item.className = 'playlist-nav-item';
+        if (playlist.id === currentPlaylistId) {
+            item.classList.add('active');
+        }
+        item.dataset.playlistId = playlist.id;
+
+        // Color dot
+        const dot = document.createElement('span');
+        dot.className = 'playlist-color-dot';
+        dot.style.backgroundColor = playlist.color || '#3b82f6';
+        item.appendChild(dot);
+
+        // Playlist name
+        const name = document.createElement('span');
+        name.className = 'playlist-nav-item-name';
+        name.textContent = playlist.name;
+        item.appendChild(name);
+
+        // Track count badge
+        const count = document.createElement('span');
+        count.className = 'playlist-nav-item-count';
+        count.textContent = playlist.track_count || 0;
+        count.title = 'Tracks in your library';
+        item.appendChild(count);
+
+        // Click handler
+        item.addEventListener('click', () => selectPlaylist(playlist.id));
+
+        elements.playlistList.appendChild(item);
+    });
+}
+
+async function selectPlaylist(playlistId) {
+    try {
+        // Disable sync button until playlist is loaded from Spotify
+        if (elements.syncBtn) {
+            elements.syncBtn.disabled = true;
+        }
+        syncPreview = null;
+
+        const response = await fetch(`/api/playlists/${playlistId}/select`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            await showModal('error', 'Select Failed', data.error || 'Failed to select playlist');
+            return;
+        }
+
+        const data = await response.json();
+        currentPlaylistId = playlistId;
+
+        // Show playlist detail view
+        showPlaylistDetail();
+
+        // Update playlist detail header
+        const playlist = playlists.find(p => p.id === playlistId);
+        if (playlist) {
+            updatePlaylistDetailHeader(playlist);
+        }
+
+        // Update nav highlighting
+        renderPlaylistNav();
+
+        // Load playlist URL into input and trigger load
+        if (playlist && playlist.spotify_url) {
+            elements.playlistUrl.value = playlist.spotify_url;
+            await loadPlaylist();
+        } else {
+            // No Spotify URL - show message to load playlist
+            if (elements.syncStatusText) {
+                elements.syncStatusText.innerHTML = 'Click <strong>Load Playlist</strong> to fetch tracks from Spotify.';
+            }
+        }
+
+        // Update storage display
+        await updateStorageDisplay();
+
+    } catch (error) {
+        await showModal('error', 'Select Failed', error.message);
+    }
+}
+
+function updatePlaylistDetailHeader(playlist) {
+    if (elements.playlistDetailName) {
+        elements.playlistDetailName.textContent = playlist.name;
+    }
+    if (elements.playlistDetailUrl) {
+        // Show shortened URL
+        const url = playlist.spotify_url || '';
+        const shortUrl = url.replace('https://open.spotify.com/playlist/', '').split('?')[0];
+        elements.playlistDetailUrl.textContent = shortUrl ? `spotify:playlist:${shortUrl.substring(0, 22)}` : 'No Spotify URL';
+    }
+    if (elements.playlistDetailColor) {
+        elements.playlistDetailColor.style.background = playlist.color || '#3b82f6';
+    }
+}
+
+async function handleDeleteCurrentPlaylist() {
+    if (!currentPlaylistId) {
+        await showModal('warning', 'No Playlist Selected', 'Please select a playlist first');
+        return;
+    }
+
+    const playlist = playlists.find(p => p.id === currentPlaylistId);
+    if (!playlist) return;
+
+    const confirmed = await showConfirm(
+        'Delete Playlist',
+        `Are you sure you want to delete "${playlist.name}"?\n\nThis will remove the playlist from your library. Downloaded tracks that are only used by this playlist will also be deleted.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/api/playlists/${currentPlaylistId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            await showModal('error', 'Delete Failed', data.error || 'Failed to delete playlist');
+            return;
+        }
+
+        announceToScreenReader(`Playlist "${playlist.name}" deleted`);
+
+        // Reset current playlist
+        currentPlaylistId = null;
+        currentPlaylist = null;
+        syncPreview = null;
+
+        // Reload playlists
+        await loadPlaylists();
+
+        // Show appropriate view
+        determineInitialView();
+
+        await showModal('success', 'Playlist Deleted', `"${playlist.name}" has been removed from your library`);
+
+    } catch (error) {
+        await showModal('error', 'Delete Failed', error.message);
+    }
+}
+
+async function createPlaylist() {
+    // Simple prompt for now - could be replaced with a modal form
+    const name = prompt('Enter playlist name:');
+    if (!name || !name.trim()) return;
+
+    const url = prompt('Enter Spotify playlist URL (optional):');
+
+    try {
+        const response = await fetch('/api/playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name.trim(),
+                spotify_url: url ? url.trim() : ''
+            })
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            await showModal('error', 'Create Failed', data.error || 'Failed to create playlist');
+            return;
+        }
+
+        const data = await response.json();
+        await showModal('success', 'Playlist Created', `Created playlist "${data.name}"`);
+
+        // Reload playlists
+        await loadPlaylists();
+
+        // Select the new playlist
+        if (data.id) {
+            await selectPlaylist(data.id);
+        }
+
+    } catch (error) {
+        await showModal('error', 'Create Failed', error.message);
+    }
+}
+
+async function savePlaylistToLibrary() {
+    if (!currentPlaylist) {
+        await showModal('warning', 'No Playlist', 'Load a playlist first');
+        return;
+    }
+
+    const url = elements.playlistUrl.value.trim();
+    const name = currentPlaylist.playlist_name || 'Untitled Playlist';
+
+    try {
+        const response = await fetch('/api/playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name,
+                spotify_url: url
+            })
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            await showModal('error', 'Save Failed', data.error || 'Failed to save playlist');
+            return;
+        }
+
+        const data = await response.json();
+
+        // Hide save button, reload playlists, select the new one
+        if (elements.savePlaylistBtn) {
+            elements.savePlaylistBtn.classList.add('hidden');
+        }
+
+        await loadPlaylists();
+
+        if (data.id) {
+            await selectPlaylist(data.id);
+        }
+
+        await showModal('success', 'Playlist Saved', `"${name}" has been added to your library`);
+
+    } catch (error) {
+        await showModal('error', 'Save Failed', error.message);
+    }
+}
+
+function isPlaylistInLibrary(spotifyUrl) {
+    // Check if this Spotify URL is already in our library
+    if (!spotifyUrl || !playlists.length) return false;
+    return playlists.some(p => p.spotify_url && p.spotify_url.includes(spotifyUrl.split('?')[0]));
+}
+
+async function deletePlaylist(playlistId) {
+    const playlist = playlists.find(p => p.id === playlistId);
+    if (!playlist) return;
+
+    const confirmed = await showConfirm(
+        'Delete Playlist',
+        `Delete "${playlist.name}"? This will remove the playlist but keep the tracks in storage.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/api/playlists/${playlistId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            await showModal('error', 'Delete Failed', data.error || 'Failed to delete playlist');
+            return;
+        }
+
+        await showModal('success', 'Playlist Deleted', `Deleted "${playlist.name}"`);
+
+        // Reload playlists
+        await loadPlaylists();
+
+    } catch (error) {
+        await showModal('error', 'Delete Failed', error.message);
+    }
+}
+
+// ==================== SMART VIEW ROUTING ====================
+
+function determineInitialView() {
+    // Smart routing: determine which view to show on app launch
+    if (playlists.length === 0) {
+        // New user - show welcome screen
+        showWelcomeState();
+    } else if (currentPlaylistId) {
+        // Has a selected playlist - show playlist detail
+        showPlaylistDetail();
+    } else {
+        // Has playlists but none selected - show library overview
+        showLibraryOverview();
+    }
+}
+
+function showWelcomeState() {
+    hideAllDashboardStates();
+    if (elements.welcomeState) {
+        elements.welcomeState.classList.remove('hidden');
+    }
+}
+
+function showLibraryOverview() {
+    hideAllDashboardStates();
+    if (elements.libraryOverview) {
+        elements.libraryOverview.classList.remove('hidden');
+        renderLibraryOverview();
+    }
+}
+
+function showPlaylistDetail() {
+    hideAllDashboardStates();
+    if (elements.playlistDetail) {
+        elements.playlistDetail.classList.remove('hidden');
+    }
+}
+
+function hideAllDashboardStates() {
+    if (elements.welcomeState) elements.welcomeState.classList.add('hidden');
+    if (elements.libraryOverview) elements.libraryOverview.classList.add('hidden');
+    if (elements.playlistDetail) elements.playlistDetail.classList.add('hidden');
+}
+
+function renderLibraryOverview() {
+    // Update stats
+    const totalTracks = playlists.reduce((sum, p) => sum + (p.track_count || 0), 0);
+
+    if (elements.overviewPlaylistCount) {
+        elements.overviewPlaylistCount.textContent = playlists.length;
+    }
+    if (elements.overviewTrackCount) {
+        elements.overviewTrackCount.textContent = totalTracks;
+    }
+
+    // Render playlist cards
+    if (elements.libraryPlaylistGrid) {
+        while (elements.libraryPlaylistGrid.firstChild) {
+            elements.libraryPlaylistGrid.removeChild(elements.libraryPlaylistGrid.firstChild);
+        }
+
+        playlists.forEach(playlist => {
+            const card = createPlaylistCard(playlist);
+            elements.libraryPlaylistGrid.appendChild(card);
+        });
+    }
+}
+
+function createPlaylistCard(playlist) {
+    const card = document.createElement('div');
+    card.className = 'playlist-card';
+    card.style.setProperty('--card-color', playlist.color || '#3b82f6');
+    card.dataset.playlistId = playlist.id;
+
+    card.innerHTML = `
+        <div class="playlist-card-header">
+            <div class="playlist-card-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13"/>
+                    <circle cx="6" cy="18" r="3"/>
+                    <circle cx="18" cy="16" r="3"/>
+                </svg>
+            </div>
+            <div class="playlist-card-info">
+                <span class="playlist-card-name">${escapeHtml(playlist.name)}</span>
+                <span class="playlist-card-tracks">${playlist.track_count || 0} tracks</span>
+            </div>
+        </div>
+        <div class="playlist-card-status">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <span>Synced</span>
+        </div>
+    `;
+
+    card.addEventListener('click', () => selectPlaylist(playlist.id));
+
+    return card;
+}
+
+// ==================== WIZARD FUNCTIONS ====================
+
+function setupWizard() {
+    if (!elements.wizardOverlay) return;
+
+    // Close button
+    if (elements.wizardCloseBtn) {
+        elements.wizardCloseBtn.addEventListener('click', closeWizard);
+    }
+
+    // Overlay click to close
+    elements.wizardOverlay.addEventListener('click', (e) => {
+        if (e.target === elements.wizardOverlay) {
+            closeWizard();
+        }
+    });
+
+    // Back button
+    if (elements.wizardBackBtn) {
+        elements.wizardBackBtn.addEventListener('click', wizardBack);
+    }
+
+    // Next/Continue button
+    if (elements.wizardNextBtn) {
+        elements.wizardNextBtn.addEventListener('click', wizardNext);
+    }
+
+    // Color picker buttons
+    elements.wizardColorBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            elements.wizardColorBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            wizardData.color = btn.dataset.color;
+        });
+    });
+
+    // ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !elements.wizardOverlay.classList.contains('hidden')) {
+            closeWizard();
+        }
+    });
+}
+
+function openWizard() {
+    // Reset wizard state
+    wizardStep = 1;
+    wizardData = {
+        url: '',
+        name: '',
+        color: '#22c55e',
+        tracks: 0,
+        playlistInfo: null
+    };
+
+    // Reset form fields
+    if (elements.wizardUrl) elements.wizardUrl.value = '';
+    if (elements.wizardName) elements.wizardName.value = '';
+
+    // Reset color selection
+    elements.wizardColorBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.color === '#22c55e');
+    });
+
+    // Show step 1
+    updateWizardStep();
+
+    // Show wizard
+    elements.wizardOverlay.classList.remove('hidden');
+    if (elements.wizardUrl) elements.wizardUrl.focus();
+}
+
+function closeWizard() {
+    elements.wizardOverlay.classList.add('hidden');
+}
+
+function updateWizardStep() {
+    // Update step indicators
+    elements.wizardSteps.forEach((step, index) => {
+        const stepNum = index + 1;
+        step.classList.remove('active', 'completed');
+        if (stepNum === wizardStep) {
+            step.classList.add('active');
+        } else if (stepNum < wizardStep) {
+            step.classList.add('completed');
+        }
+    });
+
+    // Show/hide content
+    elements.wizardContents.forEach((content, index) => {
+        content.classList.toggle('hidden', index + 1 !== wizardStep);
+    });
+
+    // Update buttons
+    if (elements.wizardBackBtn) {
+        elements.wizardBackBtn.classList.toggle('hidden', wizardStep === 1);
+    }
+    if (elements.wizardNextBtn) {
+        elements.wizardNextBtn.textContent = wizardStep === 3 ? 'Add Playlist' : 'Continue';
+    }
+}
+
+function wizardBack() {
+    if (wizardStep > 1) {
+        wizardStep--;
+        updateWizardStep();
+    }
+}
+
+async function wizardNext() {
+    if (wizardStep === 1) {
+        // Validate URL and fetch playlist info
+        const url = elements.wizardUrl ? elements.wizardUrl.value.trim() : '';
+
+        if (!url) {
+            await showModal('warning', 'Missing URL', 'Please enter a Spotify playlist URL');
+            return;
+        }
+
+        if (!url.includes('open.spotify.com/playlist')) {
+            await showModal('warning', 'Invalid URL', 'Please enter a valid Spotify playlist URL');
+            return;
+        }
+
+        wizardData.url = url;
+
+        // Show loading state
+        elements.wizardNextBtn.disabled = true;
+        elements.wizardNextBtn.textContent = 'Loading...';
+
+        try {
+            // Fetch playlist info
+            const response = await fetch('/api/playlist/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load playlist');
+            }
+
+            wizardData.playlistInfo = data;
+            wizardData.name = data.playlist_name;
+            wizardData.tracks = data.tracks.length;
+
+            // Update step 2 preview
+            if (elements.wizardPlaylistName) {
+                elements.wizardPlaylistName.textContent = data.playlist_name;
+            }
+            if (elements.wizardPlaylistTracks) {
+                elements.wizardPlaylistTracks.textContent = `${data.tracks.length} tracks`;
+            }
+            if (elements.wizardName) {
+                elements.wizardName.placeholder = data.playlist_name;
+            }
+
+            wizardStep = 2;
+            updateWizardStep();
+
+        } catch (error) {
+            await showModal('error', 'Load Failed', error.message);
+        } finally {
+            elements.wizardNextBtn.disabled = false;
+            elements.wizardNextBtn.textContent = 'Continue';
+        }
+
+    } else if (wizardStep === 2) {
+        // Get custom name if provided
+        const customName = elements.wizardName ? elements.wizardName.value.trim() : '';
+        if (customName) {
+            wizardData.name = customName;
+        }
+
+        // Update summary
+        if (elements.wizardSummaryName) {
+            elements.wizardSummaryName.textContent = wizardData.name;
+        }
+        if (elements.wizardSummaryTracks) {
+            elements.wizardSummaryTracks.textContent = wizardData.tracks;
+        }
+        if (elements.wizardSummarySize) {
+            const estSize = wizardData.tracks * 8; // ~8MB per track
+            elements.wizardSummarySize.textContent = `~${estSize} MB`;
+        }
+
+        wizardStep = 3;
+        updateWizardStep();
+
+    } else if (wizardStep === 3) {
+        // Create playlist and optionally start sync
+        elements.wizardNextBtn.disabled = true;
+        elements.wizardNextBtn.textContent = 'Adding...';
+
+        try {
+            // Create the playlist
+            const response = await fetch('/api/playlists', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: wizardData.name,
+                    spotify_url: wizardData.url,
+                    color: wizardData.color
+                })
+            });
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to create playlist');
+            }
+
+            const data = await response.json();
+
+            closeWizard();
+
+            // Reload playlists and select the new one
+            await loadPlaylists();
+
+            if (data.id) {
+                await selectPlaylist(data.id);
+            }
+
+            // Start sync if checkbox is checked
+            const downloadNow = elements.wizardDownloadNow ? elements.wizardDownloadNow.checked : false;
+            if (downloadNow && wizardData.playlistInfo) {
+                currentPlaylist = wizardData.playlistInfo;
+                syncPreview = wizardData.playlistInfo.preview;
+                displayPlaylist(wizardData.playlistInfo);
+
+                // Start sync if there are new tracks
+                if (syncPreview && syncPreview.new && syncPreview.new.length > 0) {
+                    startSync();
+                }
+            }
+
+            announceToScreenReader(`Playlist "${wizardData.name}" added successfully`);
+
+        } catch (error) {
+            await showModal('error', 'Create Failed', error.message);
+        } finally {
+            elements.wizardNextBtn.disabled = false;
+            elements.wizardNextBtn.textContent = 'Add Playlist';
+        }
+    }
+}
+
+// ==================== SYNC CONFIRM MODAL ====================
+
+function setupSyncConfirmModal() {
+    if (!elements.syncConfirmOverlay) return;
+
+    // Cancel button
+    if (elements.syncConfirmCancel) {
+        elements.syncConfirmCancel.addEventListener('click', closeSyncConfirmModal);
+    }
+
+    // Start button
+    if (elements.syncConfirmStart) {
+        elements.syncConfirmStart.addEventListener('click', confirmAndStartSync);
+    }
+
+    // Close on overlay click
+    elements.syncConfirmOverlay.addEventListener('click', (e) => {
+        if (e.target === elements.syncConfirmOverlay) {
+            closeSyncConfirmModal();
+        }
+    });
+
+    // Update summary when mode changes
+    elements.syncModeRadios.forEach(radio => {
+        radio.addEventListener('change', updateSyncSummary);
+    });
+}
+
+function showSyncConfirmModal() {
+    if (!syncPreview) {
+        showModal('warning', 'No Playlist Loaded', 'Please load a playlist first');
+        return;
+    }
+
+    const newCount = syncPreview.new ? syncPreview.new.length : 0;
+    const removedCount = syncPreview.removed ? syncPreview.removed.length : 0;
+
+    // If nothing to do, show message
+    if (newCount === 0 && removedCount === 0) {
+        showModal('success', 'Already Synced', 'Your playlist is already up to date!');
+        return;
+    }
+
+    // If only new tracks and no removed, skip modal and start sync directly
+    if (newCount > 0 && removedCount === 0) {
+        startSync();
+        return;
+    }
+
+    // Update counts in modal
+    if (elements.syncNewCount) elements.syncNewCount.textContent = newCount;
+    if (elements.syncNewCount2) elements.syncNewCount2.textContent = newCount;
+    if (elements.syncRemovedCount) elements.syncRemovedCount.textContent = removedCount;
+    if (elements.syncSummaryNew) elements.syncSummaryNew.textContent = newCount;
+    if (elements.syncSummaryRemoved) elements.syncSummaryRemoved.textContent = removedCount;
+
+    // Estimate download size (~8MB per track)
+    const estSize = newCount * 8;
+    if (elements.syncSummaryDownloadSize) {
+        elements.syncSummaryDownloadSize.textContent = `~${estSize} MB`;
+    }
+
+    // Reset to append mode
+    const appendRadio = document.querySelector('input[name="sync-mode"][value="append"]');
+    if (appendRadio) appendRadio.checked = true;
+
+    // Show/hide removed row based on mode
+    updateSyncSummary();
+
+    // Show modal
+    if (elements.syncConfirmOverlay) {
+        elements.syncConfirmOverlay.classList.remove('hidden');
+    }
+}
+
+function closeSyncConfirmModal() {
+    if (elements.syncConfirmOverlay) {
+        elements.syncConfirmOverlay.classList.add('hidden');
+    }
+}
+
+function updateSyncSummary() {
+    const selectedMode = document.querySelector('input[name="sync-mode"]:checked');
+    const isFullSync = selectedMode && selectedMode.value === 'sync';
+
+    // Show/hide removed row
+    if (elements.syncSummaryRemovedRow) {
+        elements.syncSummaryRemovedRow.style.display = isFullSync ? 'flex' : 'none';
+    }
+
+    // Update toggle state to match selection
+    if (elements.deleteRemovedToggle) {
+        elements.deleteRemovedToggle.checked = isFullSync;
+    }
+}
+
+function confirmAndStartSync() {
+    const selectedMode = document.querySelector('input[name="sync-mode"]:checked');
+    const deleteRemoved = selectedMode && selectedMode.value === 'sync';
+
+    // Update the toggle to match selection
+    if (elements.deleteRemovedToggle) {
+        elements.deleteRemovedToggle.checked = deleteRemoved;
+    }
+
+    closeSyncConfirmModal();
+    startSync();
 }

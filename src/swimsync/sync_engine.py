@@ -1,17 +1,26 @@
 """
 Sync Engine - Handles playlist fetching and downloading via spotDL
+
+Supports two modes:
+- V1 mode: Downloads directly to output folder (backward compatible)
+- V2 mode: Uses TrackStorage for content-addressed deduplication
 """
 
 import subprocess
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
-from typing import Callable, Optional, Tuple, List, Dict
+from typing import Callable, Optional, Tuple, List, Dict, TYPE_CHECKING
 import threading
 import urllib.request
 import urllib.error
 import ssl
+
+if TYPE_CHECKING:
+    from swimsync.track_storage import TrackStorage
+    from swimsync.library_manager import LibraryManager
 
 
 def find_spotdl() -> str:
@@ -50,13 +59,40 @@ def find_spotdl() -> str:
 class SyncEngine:
     """Manages playlist sync operations using spotDL"""
 
-    def __init__(self, config, state_manager):
+    def __init__(
+        self,
+        config,
+        state_manager,
+        track_storage: Optional["TrackStorage"] = None,
+        library_manager: Optional["LibraryManager"] = None,
+        playlist_id: Optional[str] = None
+    ):
+        """
+        Initialize sync engine.
+
+        Args:
+            config: Configuration manager
+            state_manager: State manager for tracking downloads
+            track_storage: Optional TrackStorage for v2 deduplication
+            library_manager: Optional LibraryManager for v2 multi-playlist
+            playlist_id: Optional playlist ID for v2 mode
+        """
         self.config = config
         self.state = state_manager
         self._lock = threading.Lock()  # Thread safety for shared state
         self._cancelled = False
         self._current_process: Optional[subprocess.Popen] = None
         self._spotdl_path = find_spotdl()
+
+        # V2 storage components (optional)
+        self._track_storage = track_storage
+        self._library_manager = library_manager
+        self._playlist_id = playlist_id
+
+    @property
+    def is_v2(self) -> bool:
+        """Check if running in v2 mode with deduplication"""
+        return self._track_storage is not None and self._playlist_id is not None
     
     def fetch_playlist(self, url: str) -> Tuple[str, List[Dict]]:
         """
@@ -65,10 +101,15 @@ class SyncEngine:
         Returns (playlist_name, list of track dicts)
         """
         # Try web scraping first (no API rate limits)
+        # Intentionally catching all exceptions here - scraping can fail in many ways
+        # (network, parsing, HTML structure changes) and we always want to fall back to spotDL
         try:
             return self._fetch_playlist_scrape(url)
-        except Exception as scrape_error:
+        except (urllib.error.URLError, json.JSONDecodeError, ValueError, KeyError) as scrape_error:
             print(f"Scraping failed: {scrape_error}, trying spotDL...")
+        except Exception as scrape_error:
+            # Catch-all for unexpected errors during scraping (HTML parsing, etc.)
+            print(f"Scraping failed unexpectedly: {type(scrape_error).__name__}: {scrape_error}, trying spotDL...")
 
         # Fall back to spotDL
         return self._fetch_playlist_spotdl(url)
@@ -251,16 +292,36 @@ class SyncEngine:
         Returns dict with 'new', 'existing', 'removed', 'suspect' lists.
         'suspect' contains tracks with files that appear corrupt (too small).
         """
-        # Get current local state
+        # First, sync manifest with actual files to remove stale entries
+        # This prevents "ghost" removed tracks from accumulating
+        self.state.sync_with_folder()
+        self.state.save()
+
+        # Refresh playlist stats in library (updates sidebar count)
+        if self._library_manager and self._playlist_id:
+            self._library_manager.refresh_playlist_stats(self._playlist_id)
+
+        # Get current local state (now cleaned up)
         local_tracks = self.state.get_all_tracks()
         local_by_key = {self._track_key(t): t for t in local_tracks}
 
         # Scan actual files in folder with sizes
+        # In v2 mode, scan the playlist folder; in v1 mode, scan output folder
         output_folder = Path(self.config.get("output_folder"))
+        if self.is_v2 and self._playlist_id:
+            scan_folder = output_folder / "playlists" / self._playlist_id
+        else:
+            scan_folder = output_folder
+
         existing_files = {}  # filename_stem -> file_size
-        if output_folder.exists():
-            for f in output_folder.glob("*.mp3"):
-                existing_files[f.stem.lower()] = f.stat().st_size
+        if scan_folder.exists():
+            for f in scan_folder.glob("*.mp3"):
+                # Handle both real files and symlinks
+                try:
+                    existing_files[f.stem.lower()] = f.stat().st_size
+                except OSError:
+                    # Broken symlink or inaccessible file
+                    pass
 
         new_tracks = []
         existing_tracks = []
@@ -274,14 +335,21 @@ class SyncEngine:
             # Check if in manifest or on disk
             expected_filename = self._generate_filename(track).lower().replace(".mp3", "")
 
-            if key in local_by_key or expected_filename in existing_files:
-                # File exists - check if it's potentially corrupt
-                file_size = existing_files.get(expected_filename, 0)
-                if file_size > 0 and file_size < self.MIN_VALID_FILE_SIZE:
+            # Check if file actually exists on disk (not just in manifest)
+            file_size = existing_files.get(expected_filename, 0)
+            file_exists_on_disk = expected_filename in existing_files and file_size > 0
+
+            if file_exists_on_disk:
+                # File exists - check if it's potentially corrupt (too small)
+                if file_size < self.MIN_VALID_FILE_SIZE:
                     track["_suspect_reason"] = f"File too small ({file_size // 1024}KB)"
                     suspect_tracks.append(track)
                 else:
                     existing_tracks.append(track)
+            elif key in local_by_key:
+                # In manifest but file missing - needs re-download
+                track["_suspect_reason"] = "File missing from disk"
+                suspect_tracks.append(track)
             else:
                 new_tracks.append(track)
 
@@ -351,13 +419,26 @@ class SyncEngine:
                 })
 
             track_start = time.time()
-            success, file_size = self._download_track(track, output_folder)
+
+            # V2 mode: download to temp, store in content-addressed storage
+            if self.is_v2:
+                success, file_size, storage_hash = self._download_track_v2(track)
+            else:
+                # V1 mode: download directly to output folder
+                success, file_size = self._download_track(track, output_folder)
+                storage_hash = None
+
             track_elapsed = time.time() - track_start
 
             if success:
                 downloaded += 1
                 total_bytes += file_size
-                self.state.add_track(track, self._generate_filename(track), file_size)
+                self.state.add_track(
+                    track,
+                    self._generate_filename(track),
+                    file_size,
+                    storage_hash=storage_hash
+                )
                 self.state.save()  # Save after each track for crash recovery
                 if progress_callback:
                     elapsed = time.time() - sync_start_time
@@ -393,7 +474,11 @@ class SyncEngine:
                     "elapsed_seconds": elapsed
                 })
 
-            success = self._delete_track(track, output_folder)
+            # V2 mode: remove reference from storage
+            if self.is_v2:
+                success = self._delete_track_v2(track)
+            else:
+                success = self._delete_track(track, output_folder)
 
             if success:
                 deleted += 1
@@ -496,9 +581,202 @@ class SyncEngine:
         except Exception as e:
             print(f"Unexpected error downloading '{track.get('title')}': {type(e).__name__}: {e}")
             return False, 0
-    
+
+    def _download_track_v2(self, track: Dict) -> Tuple[bool, int, Optional[str]]:
+        """
+        Download track using v2 storage system.
+        Downloads to temp file, stores in content-addressed storage, creates playlist link.
+        Returns (success, file_size_bytes, storage_hash)
+        """
+        if not self._track_storage or not self._playlist_id:
+            print("V2 storage not configured")
+            return False, 0, None
+
+        # First check if track already exists in storage (deduplication)
+        existing_hash = self._track_storage.find_by_track_key(
+            track.get("artist", ""),
+            track.get("title", "")
+        )
+
+        if existing_hash:
+            # Track already in storage, just create playlist link
+            display_name = self._generate_filename(track)
+            playlist_folder = Path(self.config.get("output_folder")) / "playlists" / self._playlist_id
+
+            success = self._track_storage.create_playlist_link(
+                existing_hash,
+                playlist_folder,
+                display_name
+            )
+
+            if success:
+                storage_path = self._track_storage.get_storage_path(existing_hash)
+                file_size = storage_path.stat().st_size if storage_path and storage_path.exists() else 0
+                print(f"[V2] Reusing existing track: {track.get('title')} (deduplicated)")
+                return True, file_size, existing_hash
+            else:
+                print(f"[V2] Failed to create link for existing track: {track.get('title')}")
+
+        # Download to temp directory
+        temp_dir = tempfile.mkdtemp(prefix="swimsync_")
+        temp_output = Path(temp_dir) / "{artist} - {title}"
+
+        cmd = [
+            self._spotdl_path,
+            "download",
+            track.get("url") or f"{track['artist']} - {track['title']}",
+            "--output", str(temp_output),
+            "--format", "mp3",
+            "--bitrate", self.config.get("bitrate"),
+        ]
+
+        try:
+            print(f"[spotDL V2] Running: {' '.join(cmd)}")
+
+            self._current_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            timeout = self.config.get("download_timeout")
+            stdout, stderr = self._current_process.communicate(timeout=timeout)
+            self._current_process = None
+
+            if stdout.strip():
+                print(f"[spotDL stdout] {stdout.strip()}")
+            if stderr.strip():
+                print(f"[spotDL stderr] {stderr.strip()}")
+
+            # Find downloaded file
+            downloaded_file = None
+            for mp3 in Path(temp_dir).glob("*.mp3"):
+                downloaded_file = mp3
+                break
+
+            if not downloaded_file or not downloaded_file.exists():
+                if "No results found" in stderr or "Could not find" in stderr:
+                    print(f"[V2] Download failed: No matching audio found")
+                else:
+                    print(f"[V2] Download failed: File not created")
+                return False, 0, None
+
+            file_size = downloaded_file.stat().st_size
+            if file_size < self.MIN_VALID_FILE_SIZE:
+                print(f"[V2] Download failed: File too small ({file_size} bytes)")
+                return False, 0, None
+
+            # Store in content-addressed storage
+            content_hash, is_new = self._track_storage.store_track(
+                downloaded_file,
+                track,
+                self._playlist_id
+            )
+
+            if not content_hash:
+                print(f"[V2] Failed to store track in storage")
+                return False, 0, None
+
+            # Create playlist link
+            display_name = self._generate_filename(track)
+            playlist_folder = Path(self.config.get("output_folder")) / "playlists" / self._playlist_id
+
+            success = self._track_storage.create_playlist_link(
+                content_hash,
+                playlist_folder,
+                display_name
+            )
+
+            if success:
+                status = "new" if is_new else "deduplicated"
+                print(f"[V2] Track stored ({status}): {track.get('title')}")
+                return True, file_size, content_hash
+            else:
+                print(f"[V2] Failed to create playlist link")
+                return False, 0, None
+
+        except subprocess.TimeoutExpired:
+            if self._current_process:
+                self._current_process.kill()
+                self._current_process = None
+            print(f"[V2] Download timeout for '{track.get('title')}'")
+            return False, 0, None
+        except FileNotFoundError:
+            print(f"[V2] spotDL not found at {self._spotdl_path}")
+            return False, 0, None
+        except PermissionError as e:
+            print(f"[V2] Permission denied for '{track.get('title')}': {e}")
+            return False, 0, None
+        except OSError as e:
+            print(f"[V2] OS error downloading '{track.get('title')}': {e}")
+            return False, 0, None
+        except (ValueError, KeyError) as e:
+            print(f"[V2] Data error for '{track.get('title')}': {e}")
+            return False, 0, None
+        finally:
+            # Clean up temp directory
+            import shutil
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _delete_track_v2(self, track: Dict) -> bool:
+        """
+        Delete track using v2 storage system.
+        Removes playlist link and decrements reference count.
+        Only deletes the actual file if no other playlists reference it.
+        """
+        if not self._track_storage or not self._playlist_id:
+            print("[V2] Storage not configured for delete")
+            return False
+
+        # Get storage hash from track info
+        storage_hash = track.get("storage_hash")
+
+        if not storage_hash:
+            # Try to find by track key
+            storage_hash = self._track_storage.find_by_track_key(
+                track.get("artist", ""),
+                track.get("title", "")
+            )
+
+        if not storage_hash:
+            print(f"[V2] No storage hash found for '{track.get('title')}'")
+            # Still try to remove playlist link by filename
+            playlist_folder = Path(self.config.get("output_folder")) / "playlists" / self._playlist_id
+            link_path = playlist_folder / self._generate_filename(track)
+            if link_path.exists():
+                try:
+                    link_path.unlink()
+                    return True
+                except OSError:
+                    pass
+            return False
+
+        # Remove reference from storage (may delete file if last reference)
+        file_deleted = self._track_storage.remove_reference(storage_hash, self._playlist_id)
+
+        # Remove playlist link
+        playlist_folder = Path(self.config.get("output_folder")) / "playlists" / self._playlist_id
+        link_path = playlist_folder / self._generate_filename(track)
+
+        try:
+            if link_path.exists() or link_path.is_symlink():
+                link_path.unlink()
+                if file_deleted:
+                    print(f"[V2] Deleted track and storage: {track.get('title')}")
+                else:
+                    print(f"[V2] Removed playlist link (file still referenced): {track.get('title')}")
+                return True
+        except OSError as e:
+            print(f"[V2] Failed to remove playlist link: {e}")
+
+        return file_deleted
+
     def _delete_track(self, track: Dict, output_folder: Path) -> bool:
-        """Delete a track file from the output folder"""
+        """Delete a track file from the output folder (v1 mode)"""
         filename = self._generate_filename(track)
         filepath = output_folder / filename
         

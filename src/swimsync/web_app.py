@@ -1,18 +1,50 @@
 """
 Swim Sync - Web UI Server
 A Flask-based local web server for the Swim Sync application.
+Supports multi-playlist architecture with deduplicated storage.
 """
 
 import os
+import sys
+import re
 import json
 import logging
 import secrets
 import threading
+import subprocess
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
+
+
+# Security validation patterns
+PLAYLIST_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _validate_playlist_id(playlist_id: str) -> bool:
+    """Validate playlist_id to prevent path traversal attacks."""
+    if not playlist_id:
+        return False
+    if '..' in playlist_id or '/' in playlist_id or '\\' in playlist_id:
+        return False
+    if not PLAYLIST_ID_PATTERN.match(playlist_id):
+        return False
+    return True
+
+
+def _validate_color(color: str) -> bool:
+    """Validate hex color format."""
+    if not color:
+        return True  # Empty is OK, will use default
+    return bool(HEX_COLOR_PATTERN.match(color))
+
+
 from swimsync.sync_engine import SyncEngine
 from swimsync.state_manager import StateManager
 from swimsync.config_manager import ConfigManager
+from swimsync.track_storage import TrackStorage
+from swimsync.library_manager import LibraryManager
+from swimsync.migration import run_migration_if_needed, repair_incomplete_migration
 
 app = Flask(__name__,
             template_folder='web/templates',
@@ -20,10 +52,16 @@ app = Flask(__name__,
 app.secret_key = secrets.token_hex(32)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
+# Suppress verbose werkzeug request logging (keeps errors visible)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
 # Global state
 config = None
 state = None
 sync_engine = None
+track_storage = None
+library = None
+current_playlist_id = None
 sync_status = {
     "is_syncing": False,
     "current": 0,
@@ -49,10 +87,42 @@ DEFAULT_AVG_TRACK_SIZE_MB = 8.0
 
 def init_managers():
     """Initialize the config, state, and sync engine managers."""
-    global config, state, sync_engine
+    global config, state, sync_engine, track_storage, library, current_playlist_id
+
     config = ConfigManager()
-    state = StateManager(config.get("output_folder"))
-    sync_engine = SyncEngine(config, state)
+    library_path = Path(config.get("output_folder"))
+
+    # Run migration if needed (v1 -> v2)
+    migration_result = run_migration_if_needed(library_path)
+    if migration_result and migration_result.success:
+        logging.info(f"Migration complete: {migration_result.tracks_migrated} tracks migrated")
+
+    # Initialize v2 components
+    track_storage = TrackStorage(library_path)
+    library = LibraryManager(library_path, track_storage)
+
+    # Repair any orphaned files from incomplete migration
+    repair_result = repair_incomplete_migration(library_path)
+    if repair_result.tracks_migrated > 0:
+        logging.info(f"Repair complete: {repair_result.tracks_migrated} orphaned tracks recovered")
+
+    # Get or create primary playlist
+    primary = library.get_primary_playlist()
+    if primary:
+        current_playlist_id = primary.id
+        # Use v2 state manager for the primary playlist
+        state = StateManager(str(library_path), playlist_id=current_playlist_id)
+    else:
+        # No playlists yet, use legacy v1 mode for backward compatibility
+        state = StateManager(str(library_path))
+        current_playlist_id = None
+
+    sync_engine = SyncEngine(
+        config, state,
+        track_storage=track_storage,
+        library_manager=library,
+        playlist_id=current_playlist_id
+    )
 
 
 @app.route('/')
@@ -163,11 +233,25 @@ def update_config():
         if key in ConfigManager.DEFAULTS:
             config.set(key, value)
 
-    # Reinitialize state manager if output folder changed
-    global state, sync_engine
+    # Reinitialize managers if output folder changed
+    global state, sync_engine, track_storage, library, current_playlist_id
     if "output_folder" in data:
-        state = StateManager(data["output_folder"])
-        sync_engine = SyncEngine(config, state)
+        library_path = Path(data["output_folder"])
+        track_storage = TrackStorage(library_path)
+        library = LibraryManager(library_path, track_storage)
+        primary = library.get_primary_playlist()
+        if primary:
+            current_playlist_id = primary.id
+            state = StateManager(str(library_path), playlist_id=current_playlist_id)
+        else:
+            current_playlist_id = None
+            state = StateManager(str(library_path))
+        sync_engine = SyncEngine(
+            config, state,
+            track_storage=track_storage,
+            library_manager=library,
+            playlist_id=current_playlist_id
+        )
 
     return jsonify({"success": True})
 
@@ -188,11 +272,16 @@ def load_playlist():
         # Save URL for next session
         config.set("last_playlist_url", url)
 
-        # Update state manager with current folder
+        # Update state manager with current folder and playlist
         output_folder = config.get("output_folder")
         global state, sync_engine
-        state = StateManager(output_folder)
-        sync_engine = SyncEngine(config, state)
+        state = StateManager(output_folder, playlist_id=current_playlist_id)
+        sync_engine = SyncEngine(
+            config, state,
+            track_storage=track_storage,
+            library_manager=library,
+            playlist_id=current_playlist_id
+        )
 
         # Fetch playlist
         playlist_name, tracks = sync_engine.fetch_playlist(url)
@@ -229,10 +318,21 @@ def load_playlist():
         # Projected size after sync (existing + new downloads)
         after_sync_size_mb = existing_size_mb + new_size_mb
 
+        # Get playlist folder path for display
+        playlist_folder = ""
+        if current_playlist_id:
+            folder_path = Path(output_folder) / "playlists" / current_playlist_id
+            # Convert to Windows path format for display
+            playlist_folder = str(folder_path).replace('/', '\\')
+            if playlist_folder.startswith('\\mnt\\'):
+                # WSL path - convert to Windows format
+                playlist_folder = playlist_folder.replace('\\mnt\\c\\', 'C:\\').replace('\\mnt\\d\\', 'D:\\')
+
         return jsonify({
             "success": True,
             "playlist_name": playlist_name,
             "tracks": tracks,
+            "playlist_folder": playlist_folder,
             "preview": {
                 "new": preview["new"],
                 "existing": preview["existing"],
@@ -378,13 +478,16 @@ def get_sync_status():
 
 @app.route('/api/storage', methods=['GET'])
 def get_storage():
-    """Get storage information."""
+    """Get storage information including deduplication stats."""
     total_size_mb = state.get_total_size_mb()
     track_count = state.get_track_count()
     storage_limit_gb = config.get("storage_limit_gb")
     avg_track_size_mb = state.get_avg_track_size_mb()
     last_sync_time = state.get_last_sync_time()
     device_name = config.get("device_name")
+
+    # Get deduplication stats from track storage
+    dedup_stats = track_storage.get_storage_stats() if track_storage else {}
 
     return jsonify({
         "used_mb": total_size_mb,
@@ -394,8 +497,307 @@ def get_storage():
         "percentage": (total_size_mb / 1024 / storage_limit_gb * 100) if storage_limit_gb > 0 else 0,
         "avg_track_size_mb": avg_track_size_mb,
         "last_sync_time": last_sync_time,
-        "device_name": device_name
+        "device_name": device_name,
+        "dedup": dedup_stats
     })
+
+
+# ============================================================================
+# Playlist Management API (v2)
+# ============================================================================
+
+@app.route('/api/playlists', methods=['GET'])
+def get_playlists():
+    """Get all playlists in the library."""
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlists = library.get_all_playlists()
+    primary = library.get_primary_playlist()
+
+    return jsonify({
+        "playlists": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "spotify_url": p.spotify_url,
+                "track_count": p.track_count,
+                "total_size_mb": p.total_size_mb,
+                "last_sync": p.last_sync,
+                "color": p.color,
+                "is_primary": p.id == (primary.id if primary else None)
+            }
+            for p in playlists
+        ],
+        "primary_playlist_id": primary.id if primary else None
+    })
+
+
+@app.route('/api/playlists', methods=['POST'])
+def create_playlist():
+    """Create a new playlist."""
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    data = request.json
+    if not data:
+        return jsonify({"error": "Invalid request data"}), 400
+
+    name = data.get('name', '').strip()
+    spotify_url = data.get('spotify_url', '').strip()
+    color = data.get('color', '#3b82f6')
+
+    if not _validate_color(color):
+        return jsonify({"error": "Invalid color format (use #RRGGBB)"}), 400
+
+    if not name:
+        return jsonify({"error": "Playlist name is required"}), 400
+
+    if len(name) > 100:
+        return jsonify({"error": "Playlist name too long (max 100 characters)"}), 400
+
+    # Validate Spotify URL if provided
+    if spotify_url and "open.spotify.com/playlist" not in spotify_url:
+        return jsonify({"error": "Invalid Spotify playlist URL"}), 400
+
+    try:
+        playlist = library.create_playlist(name=name, spotify_url=spotify_url, color=color)
+        return jsonify({
+            "success": True,
+            "playlist": {
+                "id": playlist.id,
+                "name": playlist.name,
+                "spotify_url": playlist.spotify_url,
+                "track_count": playlist.track_count,
+                "color": playlist.color
+            }
+        })
+    except Exception as e:
+        logging.error(f"Failed to create playlist: {e}")
+        return jsonify({"error": "Failed to create playlist"}), 500
+
+
+@app.route('/api/playlists/<playlist_id>', methods=['GET'])
+def get_playlist(playlist_id):
+    """Get a specific playlist by ID."""
+    if not _validate_playlist_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID"}), 400
+
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlist = library.get_playlist(playlist_id)
+    if not playlist:
+        return jsonify({"error": "Playlist not found"}), 404
+
+    tracks = library.get_playlist_tracks(playlist_id)
+
+    return jsonify({
+        "id": playlist.id,
+        "name": playlist.name,
+        "spotify_url": playlist.spotify_url,
+        "track_count": playlist.track_count,
+        "total_size_mb": playlist.total_size_mb,
+        "last_sync": playlist.last_sync,
+        "color": playlist.color,
+        "tracks": [
+            {
+                "title": t.title,
+                "artist": t.artist,
+                "album": t.album,
+                "filename": t.filename,
+                "file_size_mb": t.file_size_mb,
+                "status": t.status
+            }
+            for t in tracks
+        ]
+    })
+
+
+@app.route('/api/playlists/<playlist_id>', methods=['DELETE'])
+def delete_playlist(playlist_id):
+    """Delete a playlist."""
+    if not _validate_playlist_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID"}), 400
+
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlist = library.get_playlist(playlist_id)
+    if not playlist:
+        return jsonify({"error": "Playlist not found"}), 404
+
+    try:
+        success = library.delete_playlist(playlist_id)
+        if success:
+            return jsonify({"success": True, "message": "Playlist deleted"})
+        else:
+            return jsonify({"error": "Failed to delete playlist"}), 500
+    except Exception as e:
+        logging.error(f"Failed to delete playlist: {e}")
+        return jsonify({"error": "Failed to delete playlist"}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/select', methods=['POST'])
+def select_playlist(playlist_id):
+    """Select a playlist as the current/primary playlist."""
+    global current_playlist_id, state, sync_engine
+
+    if not _validate_playlist_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID"}), 400
+
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlist = library.get_playlist(playlist_id)
+    if not playlist:
+        return jsonify({"error": "Playlist not found"}), 404
+
+    try:
+        library.set_primary_playlist(playlist_id)
+        current_playlist_id = playlist_id
+
+        # Update state manager to use this playlist
+        library_path = Path(config.get("output_folder"))
+        state = StateManager(str(library_path), playlist_id=playlist_id)
+        sync_engine = SyncEngine(
+            config, state,
+            track_storage=track_storage,
+            library_manager=library,
+            playlist_id=playlist_id
+        )
+
+        return jsonify({
+            "success": True,
+            "playlist_id": playlist_id,
+            "playlist_name": playlist.name
+        })
+    except Exception as e:
+        logging.error(f"Failed to select playlist: {e}")
+        return jsonify({"error": "Failed to select playlist"}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/open-folder', methods=['POST'])
+def open_playlist_folder(playlist_id):
+    """Open the playlist's music folder in the system file explorer."""
+    if not _validate_playlist_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID"}), 400
+
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlist = library.get_playlist(playlist_id)
+    if not playlist:
+        return jsonify({"error": "Playlist not found"}), 404
+
+    try:
+        library_path = Path(config.get("output_folder"))
+        playlist_folder = library_path / "playlists" / playlist_id
+
+        # Create folder if it doesn't exist
+        playlist_folder.mkdir(parents=True, exist_ok=True)
+
+        # Convert to Windows path if running in WSL
+        folder_path = str(playlist_folder)
+        if '/mnt/c/' in folder_path or '/mnt/d/' in folder_path:
+            # Convert WSL path to Windows path
+            folder_path = folder_path.replace('/mnt/c/', 'C:\\').replace('/mnt/d/', 'D:\\').replace('/', '\\')
+
+        # Open folder based on platform
+        if sys.platform == 'win32' or 'microsoft' in os.uname().release.lower():
+            # Windows or WSL
+            subprocess.run(['explorer.exe', folder_path], check=False)
+        elif sys.platform == 'darwin':
+            # macOS
+            subprocess.run(['open', folder_path], check=False)
+        else:
+            # Linux
+            subprocess.run(['xdg-open', folder_path], check=False)
+
+        return jsonify({
+            "success": True,
+            "folder": folder_path
+        })
+    except Exception as e:
+        logging.error(f"Failed to open folder: {e}")
+        return jsonify({"error": f"Failed to open folder: {e}"}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/tracks', methods=['GET'])
+def get_playlist_tracks(playlist_id):
+    """Get tracks for a specific playlist."""
+    if not _validate_playlist_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID"}), 400
+
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    playlist = library.get_playlist(playlist_id)
+    if not playlist:
+        return jsonify({"error": "Playlist not found"}), 404
+
+    tracks = library.get_playlist_tracks(playlist_id)
+
+    return jsonify({
+        "playlist_id": playlist_id,
+        "playlist_name": playlist.name,
+        "tracks": [
+            {
+                "title": t.title,
+                "artist": t.artist,
+                "album": t.album,
+                "filename": t.filename,
+                "file_size_mb": t.file_size_mb,
+                "status": t.status,
+                "storage_hash": t.storage_hash
+            }
+            for t in tracks
+        ]
+    })
+
+
+@app.route('/api/library/stats', methods=['GET'])
+def get_library_stats():
+    """Get overall library statistics."""
+    if not library:
+        return jsonify({"error": "Library not initialized"}), 500
+
+    stats = library.get_library_stats()
+
+    return jsonify({
+        "playlist_count": stats["playlist_count"],
+        "total_playlist_tracks": stats["total_playlist_tracks"],
+        "unique_tracks": stats["unique_tracks"],
+        "actual_storage_mb": stats["actual_storage_mb"],
+        "logical_size_mb": stats["logical_size_mb"],
+        "savings_mb": stats["savings_mb"],
+        "savings_percent": stats["savings_percent"]
+    })
+
+
+@app.route('/api/library/repair', methods=['POST'])
+def repair_library():
+    """Repair library by recovering orphaned MP3 files."""
+    library_path = Path(config.get("output_folder"))
+
+    result = repair_incomplete_migration(library_path)
+
+    if result.success:
+        # Reinitialize library after repair
+        global track_storage, library
+        track_storage = TrackStorage(library_path)
+        library = LibraryManager(library_path, track_storage)
+
+        return jsonify({
+            "success": True,
+            "tracks_recovered": result.tracks_migrated,
+            "warnings": result.warnings
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": result.error
+        }), 500
 
 
 def run_server(host='127.0.0.1', port=5000, debug=False):
@@ -405,4 +807,6 @@ def run_server(host='127.0.0.1', port=5000, debug=False):
 
 
 if __name__ == '__main__':
-    run_server(debug=False)
+    # Debug mode via environment variable only (security: don't enable by default)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    run_server(debug=debug_mode)

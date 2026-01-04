@@ -8,12 +8,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+    <!-- Skip Link for keyboard users -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
     <div class="app-container">
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                         <path d="M2 12C2 12 5 8 12 8C19 8 22 12 22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         <path d="M2 16C2 16 5 12 12 12C19 12 22 16 22 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         <path d="M2 20C2 20 5 16 12 16C19 16 22 20 22 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -22,8 +25,8 @@
                 </div>
             </div>
             <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" data-view="dashboard">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <a href="#" class="nav-item active" data-view="dashboard" aria-current="page">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <rect x="3" y="3" width="7" height="7" rx="1"/>
                         <rect x="14" y="3" width="7" height="7" rx="1"/>
                         <rect x="3" y="14" width="7" height="7" rx="1"/>
@@ -32,12 +35,33 @@
                     <span>Dashboard</span>
                 </a>
                 <a href="#" class="nav-item" data-view="settings">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
                     </svg>
                     <span>Settings</span>
                 </a>
+
+                <!-- Playlists Section -->
+                <div class="nav-section">
+                    <div class="nav-section-header">
+                        <svg class="nav-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"/>
+                            <circle cx="6" cy="18" r="3"/>
+                            <circle cx="18" cy="16" r="3"/>
+                        </svg>
+                        <span>Playlists</span>
+                        <button id="add-playlist-btn" class="nav-add-btn" title="Add playlist" aria-label="Add new playlist">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="playlist-list" class="playlist-nav">
+                        <!-- Playlists loaded dynamically -->
+                    </div>
+                </div>
             </nav>
             <div class="sidebar-footer">
                 <div class="user-info">
@@ -53,23 +77,154 @@
         </aside>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="main-content">
             <!-- Dashboard View -->
-            <div id="dashboard-view" class="view active">
+            <div id="dashboard-view" class="view active" role="region" aria-label="Dashboard">
+                <h1 class="visually-hidden">Swim Sync Dashboard</h1>
+
+                <!-- Welcome State (new users) -->
+                <section id="welcome-state" class="welcome-section hidden">
+                    <div class="welcome-hero">
+                        <div class="welcome-icon-container">
+                            <svg class="welcome-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M2 12C2 12 5 8 12 8C19 8 22 12 22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M2 16C2 16 5 12 12 12C19 12 22 16 22 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M2 20C2 20 5 16 12 16C19 16 22 20 22 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                        </div>
+                        <h2 class="welcome-title">Welcome to Swim Sync</h2>
+                        <p class="welcome-subtitle">Sync your Spotify playlists to MP3 files for your Shokz OpenSwim Pro</p>
+                    </div>
+                    <div class="welcome-steps">
+                        <div class="welcome-step">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h3>Add a Playlist</h3>
+                                <p>Paste a Spotify playlist URL to get started</p>
+                            </div>
+                        </div>
+                        <div class="welcome-step">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h3>Download Tracks</h3>
+                                <p>We'll find and download high-quality MP3s</p>
+                            </div>
+                        </div>
+                        <div class="welcome-step">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h3>Sync to Device</h3>
+                                <p>Copy your music to your swimming headphones</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="welcome-action">
+                        <button id="welcome-add-btn" class="btn btn-primary btn-large">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Add Your First Playlist
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Library Overview State (has playlists but none selected) -->
+                <section id="library-overview" class="library-overview hidden">
+                    <div class="library-overview-header">
+                        <h2 class="library-overview-title">Your Library</h2>
+                        <p class="library-overview-subtitle">Select a playlist to sync or add a new one</p>
+                    </div>
+                    <div class="library-stats-overview">
+                        <div class="overview-stat">
+                            <svg class="overview-stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 18V5l12-2v13"/>
+                                <circle cx="6" cy="18" r="3"/>
+                                <circle cx="18" cy="16" r="3"/>
+                            </svg>
+                            <div class="overview-stat-content">
+                                <span class="overview-stat-value" id="overview-playlist-count">0</span>
+                                <span class="overview-stat-label">Playlists</span>
+                            </div>
+                        </div>
+                        <div class="overview-stat">
+                            <svg class="overview-stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                            <div class="overview-stat-content">
+                                <span class="overview-stat-value" id="overview-track-count">0</span>
+                                <span class="overview-stat-label">Total Tracks</span>
+                            </div>
+                        </div>
+                        <div class="overview-stat">
+                            <svg class="overview-stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                            </svg>
+                            <div class="overview-stat-content">
+                                <span class="overview-stat-value" id="overview-storage-used">0 MB</span>
+                                <span class="overview-stat-label">Storage Used</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="library-playlist-grid" id="library-playlist-grid">
+                        <!-- Playlist cards rendered dynamically -->
+                    </div>
+                    <button id="overview-add-btn" class="btn btn-secondary overview-add-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add New Playlist
+                    </button>
+                </section>
+
+                <!-- Playlist Detail View (when a playlist is selected) -->
+                <section id="playlist-detail" class="playlist-detail hidden">
+                    <!-- Playlist Detail Header -->
+                    <div class="playlist-detail-header">
+                        <div class="playlist-detail-info">
+                            <span class="playlist-detail-color" id="playlist-detail-color"></span>
+                            <div class="playlist-detail-text">
+                                <h2 class="playlist-detail-name" id="playlist-detail-name">Playlist</h2>
+                                <span class="playlist-detail-url" id="playlist-detail-url"></span>
+                            </div>
+                        </div>
+                        <div class="playlist-detail-actions">
+                            <button id="delete-playlist-btn" class="btn btn-danger-outline" title="Delete this playlist">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                    <line x1="10" y1="11" x2="10" y2="17"/>
+                                    <line x1="14" y1="11" x2="14" y2="17"/>
+                                </svg>
+                                Delete Playlist
+                            </button>
+                        </div>
+                    </div>
+
                 <!-- URL Input Section -->
-                <section class="input-section">
+                <section class="input-section" aria-label="Playlist URL input">
                     <div class="input-group">
-                        <input type="text" id="playlist-url" class="url-input" placeholder="Paste Spotify Playlist URL here...">
-                        <button id="load-btn" class="btn btn-primary">Load Playlist</button>
+                        <label for="playlist-url" class="visually-hidden">Spotify Playlist URL</label>
+                        <input type="text" id="playlist-url" class="url-input" placeholder="Paste Spotify Playlist URL here..." aria-describedby="url-hint">
+                        <span id="url-hint" class="visually-hidden">Enter a Spotify playlist URL to load tracks</span>
+                        <button id="load-btn" class="btn btn-primary">Refresh from Spotify</button>
                     </div>
                     <div class="folder-group">
-                        <label>Output Folder:</label>
-                        <input type="text" id="output-folder" class="folder-input" readonly>
-                        <button id="browse-btn" class="btn btn-secondary">
+                        <label for="output-folder">Music Folder:</label>
+                        <input type="text" id="output-folder" class="folder-input" readonly aria-describedby="folder-hint" title="Click 'Open' to view files">
+                        <span id="folder-hint" class="visually-hidden">Location where this playlist's tracks are saved</span>
+                        <button id="open-folder-btn" class="btn btn-secondary" title="Open folder in file explorer">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                <polyline points="15 3 21 3 21 9"/>
+                                <line x1="10" y1="14" x2="21" y2="3"/>
                             </svg>
-                            Browse
+                            Open
                         </button>
                     </div>
                 </section>
@@ -84,7 +239,7 @@
                     
                     <!-- Empty State -->
                     <div id="empty-state" class="empty-state">
-                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
                             <path d="M9 18V5l12-2v13"/>
                             <circle cx="6" cy="18" r="3"/>
                             <circle cx="18" cy="16" r="3"/>
@@ -93,19 +248,20 @@
                     </div>
 
                     <!-- Loading State -->
-                    <div id="loading-state" class="loading-state hidden">
-                        <div class="spinner"></div>
+                    <div id="loading-state" class="loading-state hidden" role="status" aria-live="polite">
+                        <div class="spinner" aria-hidden="true"></div>
                         <p>Loading playlist...</p>
                     </div>
 
                     <!-- Track List -->
                     <div id="track-list-container" class="track-list-container hidden">
-                        <table class="track-table">
+                        <table class="track-table" role="table" aria-label="Playlist tracks">
+                            <caption class="visually-hidden">List of tracks in the current playlist with their download status</caption>
                             <thead>
                                 <tr>
-                                    <th>Track Name</th>
-                                    <th>Artist</th>
-                                    <th>Status</th>
+                                    <th scope="col">Track Name</th>
+                                    <th scope="col">Artist</th>
+                                    <th scope="col">Status</th>
                                 </tr>
                             </thead>
                             <tbody id="track-list">
@@ -160,44 +316,53 @@
                             <span class="stat-label">avg/track</span>
                         </div>
                     </div>
-                    <div class="stats-breakdown">
-                        <div class="breakdown-item breakdown-existing">
-                            <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                <polyline points="22 4 12 14.01 9 11.01"/>
-                            </svg>
-                            <span class="breakdown-count" id="breakdown-existing-count">0</span>
-                            <span class="breakdown-label">existing</span>
-                            <span class="breakdown-size" id="breakdown-existing-size">(0 MB)</span>
-                        </div>
-                        <div class="breakdown-item breakdown-new" id="breakdown-new-item">
-                            <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                            <span class="breakdown-count" id="breakdown-new-count">0</span>
-                            <span class="breakdown-label">new</span>
-                            <span class="breakdown-size" id="breakdown-new-size">(0 MB)</span>
-                        </div>
-                        <div class="breakdown-item breakdown-failed hidden" id="breakdown-failed-item">
-                            <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"/>
-                                <line x1="15" y1="9" x2="9" y2="15"/>
-                                <line x1="9" y1="9" x2="15" y2="15"/>
-                            </svg>
-                            <span class="breakdown-count" id="breakdown-failed-count">0</span>
-                            <span class="breakdown-label">failed</span>
-                        </div>
-                        <div class="breakdown-item breakdown-removed">
-                            <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="3 6 5 6 21 6"/>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                            </svg>
-                            <span class="breakdown-count" id="breakdown-removed-count">0</span>
-                            <span class="breakdown-label">removed</span>
-                        </div>
+                    <!-- Sync Status Summary -->
+                    <div class="sync-status-summary" id="sync-status-summary">
+                        <p class="sync-status-text" id="sync-status-text">Loading playlist...</p>
                     </div>
+
+                    <!-- Detailed Breakdown (collapsible) -->
+                    <details class="sync-details-panel">
+                        <summary class="sync-details-toggle">View details</summary>
+                        <div class="stats-breakdown">
+                            <div class="breakdown-item breakdown-existing">
+                                <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                    <polyline points="22 4 12 14.01 9 11.01"/>
+                                </svg>
+                                <span class="breakdown-count" id="breakdown-existing-count">0</span>
+                                <span class="breakdown-label">downloaded</span>
+                                <span class="breakdown-size" id="breakdown-existing-size">(0 MB)</span>
+                            </div>
+                            <div class="breakdown-item breakdown-new" id="breakdown-new-item">
+                                <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                <span class="breakdown-count" id="breakdown-new-count">0</span>
+                                <span class="breakdown-label">to download</span>
+                                <span class="breakdown-size" id="breakdown-new-size">(0 MB)</span>
+                            </div>
+                            <div class="breakdown-item breakdown-failed hidden" id="breakdown-failed-item">
+                                <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="15" y1="9" x2="9" y2="15"/>
+                                    <line x1="9" y1="9" x2="15" y2="15"/>
+                                </svg>
+                                <span class="breakdown-count" id="breakdown-failed-count">0</span>
+                                <span class="breakdown-label">failed</span>
+                            </div>
+                            <div class="breakdown-item breakdown-removed" id="breakdown-removed-item">
+                                <svg class="breakdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                                <span class="breakdown-count" id="breakdown-removed-count">0</span>
+                                <span class="breakdown-label">not on Spotify</span>
+                            </div>
+                        </div>
+                    </details>
                 </section>
 
                 <!-- Storage & Actions -->
@@ -254,7 +419,15 @@
                         </div>
                     </div>
                     <div class="action-buttons">
-                        <button id="sync-btn" class="btn btn-primary btn-large" disabled>Sync Now</button>
+                        <button id="save-playlist-btn" class="btn btn-success hidden" title="Save this playlist to your library">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                                <polyline points="17 21 17 13 7 13 7 21"/>
+                                <polyline points="7 3 7 8 15 8"/>
+                            </svg>
+                            Save to Library
+                        </button>
+                        <button id="sync-btn" class="btn btn-primary btn-large" disabled>Download Missing</button>
                         <button id="cancel-btn" class="btn btn-secondary" disabled>Cancel</button>
                         <label class="toggle-label">
                             <input type="checkbox" id="delete-removed-toggle">
@@ -263,6 +436,7 @@
                         </label>
                     </div>
                 </section>
+                </section><!-- End playlist-detail -->
             </div>
 
             <!-- Settings View -->
@@ -360,9 +534,9 @@
         </main>
 
         <!-- Sync Progress Panel -->
-        <aside id="sync-panel" class="sync-panel hidden">
+        <aside id="sync-panel" class="sync-panel hidden" role="region" aria-label="Download progress" aria-live="polite">
             <div class="sync-panel-header">
-                <h3>Syncing...</h3>
+                <h3>Downloading...</h3>
                 <span id="sync-percent">0%</span>
             </div>
             <div class="sync-progress-ring">
@@ -435,10 +609,10 @@
     </div>
 
     <!-- Custom Modal -->
-    <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-message">
         <div class="modal">
             <div class="modal-header">
-                <div class="modal-icon" id="modal-icon">
+                <div class="modal-icon" id="modal-icon" aria-hidden="true">
                     <!-- Icon inserted by JS -->
                 </div>
                 <h3 class="modal-title" id="modal-title">Title</h3>
@@ -449,6 +623,181 @@
             <div class="modal-footer" id="modal-footer">
                 <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
                 <button class="btn btn-primary" id="modal-confirm-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live region for status announcements -->
+    <div id="status-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Sync Confirmation Modal -->
+    <div id="sync-confirm-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sync-confirm-title">
+        <div class="modal sync-confirm-modal">
+            <div class="modal-header">
+                <div class="modal-icon modal-icon-info">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                </div>
+                <h3 class="modal-title" id="sync-confirm-title">Sync Options</h3>
+            </div>
+            <div class="modal-body">
+                <p class="sync-confirm-intro">Choose how to sync this playlist:</p>
+
+                <div class="sync-options">
+                    <label class="sync-option" id="sync-option-append">
+                        <input type="radio" name="sync-mode" value="append" checked>
+                        <div class="sync-option-content">
+                            <div class="sync-option-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                                <span class="sync-option-title">Download New Only</span>
+                            </div>
+                            <p class="sync-option-desc">Add <strong id="sync-new-count">0</strong> new tracks. Keep all existing tracks, even if removed from Spotify.</p>
+                        </div>
+                    </label>
+
+                    <label class="sync-option" id="sync-option-sync">
+                        <input type="radio" name="sync-mode" value="sync">
+                        <div class="sync-option-content">
+                            <div class="sync-option-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                    <polyline points="23 4 23 10 17 10"/>
+                                    <polyline points="1 20 1 14 7 14"/>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                                </svg>
+                                <span class="sync-option-title">Full Sync</span>
+                            </div>
+                            <p class="sync-option-desc">Add <strong id="sync-new-count-2">0</strong> new tracks and <strong class="sync-remove-warning">remove <span id="sync-removed-count">0</span> tracks</strong> no longer on Spotify.</p>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="sync-summary" id="sync-summary">
+                    <div class="sync-summary-row">
+                        <span>New tracks to download:</span>
+                        <span class="sync-summary-value sync-summary-new" id="sync-summary-new">0</span>
+                    </div>
+                    <div class="sync-summary-row" id="sync-summary-removed-row">
+                        <span>Tracks to remove:</span>
+                        <span class="sync-summary-value sync-summary-removed" id="sync-summary-removed">0</span>
+                    </div>
+                    <div class="sync-summary-row">
+                        <span>Estimated download size:</span>
+                        <span class="sync-summary-value" id="sync-summary-download-size">~0 MB</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="sync-confirm-cancel">Cancel</button>
+                <button class="btn btn-primary" id="sync-confirm-start">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Start Download
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Playlist Wizard Modal -->
+    <div id="wizard-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <div class="wizard-modal">
+            <div class="wizard-header">
+                <div class="wizard-progress">
+                    <div class="wizard-step active" data-step="1">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">URL</span>
+                    </div>
+                    <div class="wizard-step-line"></div>
+                    <div class="wizard-step" data-step="2">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">Details</span>
+                    </div>
+                    <div class="wizard-step-line"></div>
+                    <div class="wizard-step" data-step="3">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">Confirm</span>
+                    </div>
+                </div>
+                <button id="wizard-close-btn" class="wizard-close-btn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Step 1: URL Input -->
+            <div class="wizard-content" id="wizard-step-1">
+                <h2 id="wizard-title" class="wizard-title">Add a Playlist</h2>
+                <p class="wizard-description">Paste your Spotify playlist URL below</p>
+                <div class="wizard-form">
+                    <label for="wizard-url" class="wizard-label">Spotify Playlist URL</label>
+                    <input type="text" id="wizard-url" class="wizard-input" placeholder="https://open.spotify.com/playlist/...">
+                    <p class="wizard-hint">Find this by clicking "Share" → "Copy link" in Spotify</p>
+                </div>
+            </div>
+
+            <!-- Step 2: Playlist Details -->
+            <div class="wizard-content hidden" id="wizard-step-2">
+                <h2 class="wizard-title">Playlist Found</h2>
+                <div class="wizard-playlist-preview">
+                    <div class="wizard-playlist-info">
+                        <span class="wizard-playlist-name" id="wizard-playlist-name">Loading...</span>
+                        <span class="wizard-playlist-tracks" id="wizard-playlist-tracks">0 tracks</span>
+                    </div>
+                </div>
+                <div class="wizard-form">
+                    <label for="wizard-name" class="wizard-label">Playlist Name (optional)</label>
+                    <input type="text" id="wizard-name" class="wizard-input" placeholder="Keep original name">
+                    <label for="wizard-color" class="wizard-label">Color</label>
+                    <div class="wizard-color-picker">
+                        <button type="button" class="wizard-color-btn active" data-color="#22c55e" style="background:#22c55e" aria-label="Green"></button>
+                        <button type="button" class="wizard-color-btn" data-color="#3b82f6" style="background:#3b82f6" aria-label="Blue"></button>
+                        <button type="button" class="wizard-color-btn" data-color="#8b5cf6" style="background:#8b5cf6" aria-label="Purple"></button>
+                        <button type="button" class="wizard-color-btn" data-color="#f59e0b" style="background:#f59e0b" aria-label="Orange"></button>
+                        <button type="button" class="wizard-color-btn" data-color="#ef4444" style="background:#ef4444" aria-label="Red"></button>
+                        <button type="button" class="wizard-color-btn" data-color="#06b6d4" style="background:#06b6d4" aria-label="Cyan"></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Confirm -->
+            <div class="wizard-content hidden" id="wizard-step-3">
+                <h2 class="wizard-title">Ready to Add</h2>
+                <div class="wizard-summary">
+                    <div class="wizard-summary-item">
+                        <span class="wizard-summary-label">Playlist</span>
+                        <span class="wizard-summary-value" id="wizard-summary-name">My Playlist</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="wizard-summary-label">Tracks</span>
+                        <span class="wizard-summary-value" id="wizard-summary-tracks">0</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="wizard-summary-label">Est. Size</span>
+                        <span class="wizard-summary-value" id="wizard-summary-size">~0 MB</span>
+                    </div>
+                </div>
+                <div class="wizard-options">
+                    <label class="wizard-checkbox">
+                        <input type="checkbox" id="wizard-download-now" checked>
+                        <span class="wizard-checkbox-mark"></span>
+                        <span>Download tracks immediately</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="wizard-footer">
+                <button id="wizard-back-btn" class="btn btn-secondary hidden">Back</button>
+                <button id="wizard-next-btn" class="btn btn-primary">Continue</button>
             </div>
         </div>
     </div>
