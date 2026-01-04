@@ -387,6 +387,17 @@ def start_sync():
     est_track_size = avg_track_size if avg_track_size > 0 else DEFAULT_AVG_TRACK_SIZE_MB
     total_download_mb = len(tracks_to_download) * est_track_size
 
+    # Build track queue with initial statuses
+    track_queue = []
+    for i, track in enumerate(tracks_to_download):
+        track_queue.append({
+            "index": i,
+            "title": track.get("title", "Unknown"),
+            "artist": track.get("artist", "Unknown"),
+            "status": "pending",  # pending, downloading, downloaded, failed
+            "file_size_mb": 0
+        })
+
     # Reset sync status
     with sync_lock:
         sync_status = {
@@ -403,7 +414,8 @@ def start_sync():
             "completed_count": 0,
             "failed_count": 0,
             "pending_count": len(tracks_to_download),
-            "failed_tracks": []
+            "failed_tracks": [],
+            "track_queue": track_queue  # Individual track statuses
         }
 
     def progress_callback(current, total, track_name, status, extra=None):
@@ -416,7 +428,19 @@ def start_sync():
             sync_status["speed_mbps"] = extra.get("speed_mbps", 0)
             sync_status["file_size_mb"] = extra.get("file_size_mb", 0)
 
-            # Update download statistics (status values: "Downloading", "Downloaded", "Failed", "Deleting", "Deleted")
+            # Update individual track status in queue
+            track_idx = current - 1  # current is 1-indexed
+            if 0 <= track_idx < len(sync_status["track_queue"]):
+                track_entry = sync_status["track_queue"][track_idx]
+                if status == "Downloading":
+                    track_entry["status"] = "downloading"
+                elif status == "Downloaded":
+                    track_entry["status"] = "downloaded"
+                    track_entry["file_size_mb"] = extra.get("file_size_mb", 0)
+                elif status == "Failed":
+                    track_entry["status"] = "failed"
+
+            # Update download statistics
             if status == "Downloaded":
                 sync_status["downloaded_mb"] += extra.get("file_size_mb", 0)
                 sync_status["completed_count"] += 1

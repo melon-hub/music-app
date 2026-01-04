@@ -270,6 +270,9 @@ const elements = {
     playlistDetailColor: document.getElementById('playlist-detail-color'),
     deletePlaylistBtn: document.getElementById('delete-playlist-btn'),
 
+    // Track queue during sync
+    syncTrackQueueList: document.getElementById('sync-track-queue-list'),
+
     // Sync confirm modal
     syncConfirmOverlay: document.getElementById('sync-confirm-overlay'),
     syncConfirmCancel: document.getElementById('sync-confirm-cancel'),
@@ -1071,6 +1074,81 @@ function updateSyncProgress(status) {
         const circumference = 2 * Math.PI * 45; // radius = 45
         const offset = circumference - (percent / 100) * circumference;
         elements.progressCircle.style.strokeDashoffset = offset;
+    }
+
+    // Update live track queue
+    if (elements.syncTrackQueueList && status.track_queue) {
+        renderTrackQueue(status.track_queue);
+    }
+
+    // Update sidebar count live during sync
+    if (currentPlaylistId && status.completed_count > 0) {
+        updateSidebarCountLive(status.completed_count);
+    }
+}
+
+function renderTrackQueue(trackQueue) {
+    if (!elements.syncTrackQueueList) return;
+
+    // Sort: downloading first, then pending, then completed/failed at bottom
+    const sortOrder = { downloading: 0, pending: 1, downloaded: 2, failed: 2 };
+    const sortedQueue = [...trackQueue].sort((a, b) => {
+        return (sortOrder[a.status] || 1) - (sortOrder[b.status] || 1);
+    });
+
+    // Build HTML for track items
+    const html = sortedQueue.map(track => {
+        const statusClass = `track-status-${track.status}`;
+        const statusIcon = getTrackStatusIcon(track.status);
+        const sizeText = track.status === 'downloaded' && track.file_size_mb > 0
+            ? `<span class="track-size">${track.file_size_mb.toFixed(1)} MB</span>`
+            : '';
+
+        return `
+            <div class="sync-track-item ${statusClass}">
+                <span class="sync-track-status">${statusIcon}</span>
+                <div class="sync-track-info">
+                    <span class="sync-track-title">${escapeHtml(track.title)}</span>
+                    <span class="sync-track-artist">${escapeHtml(track.artist)}</span>
+                </div>
+                ${sizeText}
+            </div>
+        `;
+    }).join('');
+
+    elements.syncTrackQueueList.innerHTML = html;
+
+    // Scroll to keep downloading track visible
+    const downloadingItem = elements.syncTrackQueueList.querySelector('.track-status-downloading');
+    if (downloadingItem) {
+        downloadingItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function getTrackStatusIcon(status) {
+    switch (status) {
+        case 'downloading':
+            return '<span class="status-spinner">⏳</span>';
+        case 'downloaded':
+            return '<span class="status-done">✓</span>';
+        case 'failed':
+            return '<span class="status-failed">✗</span>';
+        case 'pending':
+        default:
+            return '<span class="status-pending">○</span>';
+    }
+}
+
+function updateSidebarCountLive(completedCount) {
+    // Find current playlist in sidebar and update count
+    const playlistItem = document.querySelector(`.playlist-item[data-id="${currentPlaylistId}"]`);
+    if (playlistItem) {
+        const countEl = playlistItem.querySelector('.playlist-count');
+        if (countEl) {
+            // Get existing count and add completed downloads
+            const existingCount = syncPreview?.existing?.length || 0;
+            countEl.textContent = existingCount + completedCount;
+        }
     }
 }
 

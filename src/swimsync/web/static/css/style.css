@@ -1209,6 +1209,120 @@ html, body {
     font-variant-numeric: tabular-nums;
 }
 
+/* Track Queue during sync */
+.sync-track-queue {
+    margin-top: var(--spacing-lg);
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--spacing-md);
+}
+
+.sync-track-queue-header {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-sm);
+}
+
+.sync-track-queue-list {
+    max-height: 200px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.sync-track-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    font-size: var(--font-size-sm);
+    transition: all 0.2s ease;
+}
+
+.sync-track-status {
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.sync-track-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.sync-track-title {
+    display: block;
+    font-weight: 500;
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sync-track-artist {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.track-size {
+    flex-shrink: 0;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+/* Track status styles */
+.track-status-downloading {
+    background: rgba(8, 145, 178, 0.1);
+    border-left: 3px solid var(--color-primary);
+}
+
+.track-status-downloading .sync-track-title {
+    color: var(--color-primary);
+}
+
+.track-status-downloaded {
+    background: rgba(22, 163, 74, 0.1);
+}
+
+.track-status-downloaded .status-done {
+    color: var(--color-success);
+}
+
+.track-status-failed {
+    background: rgba(220, 38, 38, 0.1);
+}
+
+.track-status-failed .status-failed {
+    color: var(--color-error);
+}
+
+.track-status-pending {
+    opacity: 0.7;
+}
+
+.status-pending {
+    color: var(--color-text-muted);
+}
+
+.status-spinner {
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 /* ==================== SETTINGS ==================== */
 .settings-card {
     background: var(--color-card);
