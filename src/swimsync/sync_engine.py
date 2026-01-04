@@ -11,6 +11,7 @@ from typing import Callable, Optional, Tuple, List, Dict
 import threading
 import urllib.request
 import urllib.error
+import ssl
 
 
 def find_spotdl() -> str:
@@ -90,8 +91,12 @@ class SyncEngine:
         }
 
         req = urllib.request.Request(embed_url, headers=headers)
+        # Create SSL context that doesn't verify certs (Windows compatibility)
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30, context=ssl_context) as response:
                 html = response.read().decode('utf-8')
         except urllib.error.URLError as e:
             raise Exception(f"Failed to fetch playlist page: {e}")
