@@ -599,3 +599,42 @@ class LibraryManager:
             name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
             filename = name[:195] + ('.' + ext if ext else '')
         return filename
+
+    def repair_broken_symlinks(self) -> int:
+        """
+        Find and remove broken symlinks in all playlist folders.
+        This handles cases where storage files were deleted or symlinks
+        were created with unicode issues.
+
+        Returns:
+            Number of broken symlinks removed
+        """
+        removed = 0
+        playlists_dir = self.library_path / self.PLAYLISTS_DIR
+
+        if not playlists_dir.exists():
+            return 0
+
+        for playlist_folder in playlists_dir.iterdir():
+            if not playlist_folder.is_dir():
+                continue
+
+            for file_path in playlist_folder.glob("*.mp3"):
+                # Check if it's a symlink pointing to a non-existent target
+                if file_path.is_symlink():
+                    try:
+                        # Try to access the target - this will fail if broken
+                        file_path.stat()
+                    except OSError:
+                        # Broken symlink - remove it
+                        try:
+                            file_path.unlink()
+                            removed += 1
+                            logging.info(f"Removed broken symlink: {file_path.name}")
+                        except OSError as e:
+                            logging.warning(f"Failed to remove broken symlink {file_path}: {e}")
+
+        if removed > 0:
+            logging.info(f"Repaired {removed} broken symlinks")
+
+        return removed

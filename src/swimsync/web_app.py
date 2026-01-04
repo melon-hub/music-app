@@ -106,6 +106,11 @@ def init_managers():
     if repair_result.tracks_migrated > 0:
         logging.info(f"Repair complete: {repair_result.tracks_migrated} orphaned tracks recovered")
 
+    # Repair any broken symlinks (from unicode issues or deleted storage files)
+    broken_links_removed = library.repair_broken_symlinks()
+    if broken_links_removed > 0:
+        logging.info(f"Removed {broken_links_removed} broken symlinks")
+
     # Get or create primary playlist
     primary = library.get_primary_playlist()
     if primary:
