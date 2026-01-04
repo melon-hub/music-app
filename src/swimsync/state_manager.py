@@ -7,9 +7,22 @@ import json
 import logging
 import os
 import threading
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text by replacing unicode whitespace with regular spaces."""
+    # Replace non-breaking spaces and other unicode whitespace with regular space
+    text = text.replace('\xa0', ' ')  # Non-breaking space
+    text = text.replace('\u200b', '')  # Zero-width space
+    text = text.replace('\u2009', ' ')  # Thin space
+    text = text.replace('\u202f', ' ')  # Narrow no-break space
+    # Normalize unicode to NFC form for consistent comparison
+    text = unicodedata.normalize('NFC', text)
+    return text
 
 
 class StateManager:
@@ -140,13 +153,13 @@ class StateManager:
     
     def get_track(self, title: str, artist: str) -> Optional[Dict]:
         """Find a specific track by title and artist"""
-        key = f"{artist.lower().strip()}::{title.lower().strip()}"
-        
+        key = f"{_normalize_text(artist).lower().strip()}::{_normalize_text(title).lower().strip()}"
+
         for track in self._data.get("tracks", []):
-            track_key = f"{track.get('artist', '').lower().strip()}::{track.get('title', '').lower().strip()}"
+            track_key = f"{_normalize_text(track.get('artist', '')).lower().strip()}::{_normalize_text(track.get('title', '')).lower().strip()}"
             if track_key == key:
                 return track
-        
+
         return None
     
     def add_track(
@@ -194,11 +207,11 @@ class StateManager:
     
     def remove_track(self, track_info: Dict):
         """Remove a track from the manifest"""
-        key = f"{track_info.get('artist', '').lower().strip()}::{track_info.get('title', '').lower().strip()}"
-        
+        key = f"{_normalize_text(track_info.get('artist', '')).lower().strip()}::{_normalize_text(track_info.get('title', '')).lower().strip()}"
+
         self._data["tracks"] = [
             t for t in self._data["tracks"]
-            if f"{t.get('artist', '').lower().strip()}::{t.get('title', '').lower().strip()}" != key
+            if f"{_normalize_text(t.get('artist', '')).lower().strip()}::{_normalize_text(t.get('title', '')).lower().strip()}" != key
         ]
     
     def update_playlist_info(self, url: str, name: str):

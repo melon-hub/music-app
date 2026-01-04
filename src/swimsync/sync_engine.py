@@ -813,17 +813,29 @@ class SyncEngine:
                 except OSError as e:
                     print(f"Warning: Could not terminate download process: {e}")
     
+    def _normalize_text(self, text: str) -> str:
+        """Normalize text by replacing unicode whitespace with regular spaces."""
+        import unicodedata
+        # Replace non-breaking spaces and other unicode whitespace with regular space
+        text = text.replace('\xa0', ' ')  # Non-breaking space
+        text = text.replace('\u200b', '')  # Zero-width space
+        text = text.replace('\u2009', ' ')  # Thin space
+        text = text.replace('\u202f', ' ')  # Narrow no-break space
+        # Normalize unicode to NFC form for consistent comparison
+        text = unicodedata.normalize('NFC', text)
+        return text
+
     def _track_key(self, track: Dict) -> str:
         """Generate a unique key for track comparison"""
         # Normalize for comparison
-        title = track.get("title", "").lower().strip()
-        artist = track.get("artist", "").lower().strip()
+        title = self._normalize_text(track.get("title", "")).lower().strip()
+        artist = self._normalize_text(track.get("artist", "")).lower().strip()
         return f"{artist}::{title}"
-    
+
     def _generate_filename(self, track: Dict) -> str:
         """Generate safe filename for track"""
-        artist = track.get("artist", "Unknown")
-        title = track.get("title", "Unknown")
+        artist = self._normalize_text(track.get("artist", "Unknown"))
+        title = self._normalize_text(track.get("title", "Unknown"))
 
         # Remove invalid filename characters
         filename = f"{artist} - {title}"
