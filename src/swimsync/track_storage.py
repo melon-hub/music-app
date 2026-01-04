@@ -337,7 +337,10 @@ class TrackStorage:
         Returns:
             Content hash if found, None otherwise
         """
-        key = f"{_normalize_text(artist).lower().strip()}::{_normalize_text(title).lower().strip()}"
+        # Use first artist for matching
+        norm_artist = _normalize_text(artist).lower().strip()
+        first_artist = norm_artist.split(',')[0].strip()
+        key = f"{first_artist}::{_normalize_text(title).lower().strip()}"
         return self._index["hash_by_key"].get(key)
 
     def get_storage_stats(self) -> Dict:
@@ -421,7 +424,17 @@ class TrackStorage:
         return removed
 
     def _make_track_key(self, track_info: Dict) -> str:
-        """Generate normalized track key for lookup."""
+        """Generate normalized track key for lookup.
+
+        Uses spotify_id as primary key when available.
+        Falls back to first_artist::title for matching.
+        """
+        spotify_id = track_info.get("spotify_id", "").strip()
+        if spotify_id:
+            return f"spotify::{spotify_id}"
+
         artist = _normalize_text(track_info.get("artist", "")).lower().strip()
         title = _normalize_text(track_info.get("title", "")).lower().strip()
-        return f"{artist}::{title}"
+        # Use only first artist for matching
+        first_artist = artist.split(',')[0].strip()
+        return f"{first_artist}::{title}"

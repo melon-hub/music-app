@@ -826,11 +826,24 @@ class SyncEngine:
         return text
 
     def _track_key(self, track: Dict) -> str:
-        """Generate a unique key for track comparison"""
-        # Normalize for comparison
+        """Generate a unique key for track comparison.
+
+        Uses spotify_id as primary key when available (most reliable).
+        Falls back to normalized first_artist::title for matching.
+        """
+        # Prefer spotify_id when available - most reliable identifier
+        spotify_id = track.get("spotify_id", "").strip()
+        if spotify_id:
+            return f"spotify::{spotify_id}"
+
+        # Fall back to artist::title with normalization
         title = self._normalize_text(track.get("title", "")).lower().strip()
         artist = self._normalize_text(track.get("artist", "")).lower().strip()
-        return f"{artist}::{title}"
+
+        # Use only first artist for matching (handles "Artist1, Artist2" variations)
+        first_artist = artist.split(',')[0].strip()
+
+        return f"{first_artist}::{title}"
 
     def _generate_filename(self, track: Dict) -> str:
         """Generate safe filename for track"""

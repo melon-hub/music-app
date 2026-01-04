@@ -357,12 +357,18 @@ class LibraryManager:
         filename = f"{track_info.get('artist', 'Unknown')} - {track_info.get('title', 'Unknown')}.mp3"
         filename = self._sanitize_filename(filename)
 
-        # Check if track already exists
-        existing_keys = {
-            f"{_normalize_text(t['artist']).lower()}::{_normalize_text(t['title']).lower()}"
-            for t in manifest["tracks"]
-        }
-        new_key = f"{_normalize_text(track_info.get('artist', '')).lower()}::{_normalize_text(track_info.get('title', '')).lower()}"
+        # Check if track already exists (using spotify_id or first_artist::title)
+        def make_track_key(t):
+            spotify_id = t.get("spotify_id", "").strip()
+            if spotify_id:
+                return f"spotify::{spotify_id}"
+            title = _normalize_text(t.get("title", "")).lower()
+            artist = _normalize_text(t.get("artist", "")).lower()
+            first_artist = artist.split(',')[0].strip()
+            return f"{first_artist}::{title}"
+
+        existing_keys = {make_track_key(t) for t in manifest["tracks"]}
+        new_key = make_track_key(track_info)
         if new_key in existing_keys:
             logging.debug(f"Track already in playlist: {new_key}")
             return True
@@ -397,7 +403,8 @@ class LibraryManager:
         self,
         playlist_id: str,
         artist: str,
-        title: str
+        title: str,
+        spotify_id: str = ""
     ) -> bool:
         """
         Remove a track from a playlist.
@@ -425,14 +432,30 @@ class LibraryManager:
         except (json.JSONDecodeError, IOError):
             return False
 
-        # Find and remove track
-        track_key = f"{_normalize_text(artist).lower()}::{_normalize_text(title).lower()}"
-        removed_track = None
+        # Helper to generate track key (spotify_id preferred, then first_artist::title)
+        def make_track_key(t):
+            sid = t.get("spotify_id", "").strip() if isinstance(t, dict) else ""
+            if sid:
+                return f"spotify::{sid}"
+            t_title = _normalize_text(t.get("title", "") if isinstance(t, dict) else title).lower()
+            t_artist = _normalize_text(t.get("artist", "") if isinstance(t, dict) else artist).lower()
+            first_artist = t_artist.split(',')[0].strip()
+            return f"{first_artist}::{t_title}"
 
+        # Build search key from parameters
+        if spotify_id:
+            search_key = f"spotify::{spotify_id}"
+        else:
+            norm_artist = _normalize_text(artist).lower()
+            first_artist = norm_artist.split(',')[0].strip()
+            search_key = f"{first_artist}::{_normalize_text(title).lower()}"
+
+        # Find and remove track
+        removed_track = None
         new_tracks = []
         for t in manifest["tracks"]:
-            key = f"{_normalize_text(t['artist']).lower()}::{_normalize_text(t['title']).lower()}"
-            if key == track_key:
+            key = make_track_key(t)
+            if key == search_key:
                 removed_track = t
             else:
                 new_tracks.append(t)

@@ -151,14 +151,49 @@ class StateManager:
         """Get list of all tracked tracks"""
         return self._data.get("tracks", [])
     
-    def get_track(self, title: str, artist: str) -> Optional[Dict]:
-        """Find a specific track by title and artist"""
-        key = f"{_normalize_text(artist).lower().strip()}::{_normalize_text(title).lower().strip()}"
+    def _make_track_key(self, track: Dict) -> str:
+        """Generate a track key for comparison.
+
+        Uses spotify_id as primary key when available.
+        Falls back to first_artist::title for matching.
+        """
+        spotify_id = track.get("spotify_id", "").strip()
+        if spotify_id:
+            return f"spotify::{spotify_id}"
+
+        title = _normalize_text(track.get("title", "")).lower().strip()
+        artist = _normalize_text(track.get("artist", "")).lower().strip()
+        # Use only first artist for matching
+        first_artist = artist.split(',')[0].strip()
+        return f"{first_artist}::{title}"
+
+    def get_track(self, title: str, artist: str, spotify_id: str = "") -> Optional[Dict]:
+        """Find a specific track by spotify_id or title/artist."""
+        # Build search key
+        search_key = None
+        if spotify_id:
+            search_key = f"spotify::{spotify_id}"
+        else:
+            norm_title = _normalize_text(title).lower().strip()
+            norm_artist = _normalize_text(artist).lower().strip()
+            first_artist = norm_artist.split(',')[0].strip()
+            search_key = f"{first_artist}::{norm_title}"
 
         for track in self._data.get("tracks", []):
-            track_key = f"{_normalize_text(track.get('artist', '')).lower().strip()}::{_normalize_text(track.get('title', '')).lower().strip()}"
-            if track_key == key:
+            track_key = self._make_track_key(track)
+            if track_key == search_key:
                 return track
+
+        # Also try matching without spotify_id if we searched by ID but didn't find
+        if spotify_id:
+            norm_title = _normalize_text(title).lower().strip()
+            norm_artist = _normalize_text(artist).lower().strip()
+            first_artist = norm_artist.split(',')[0].strip()
+            fallback_key = f"{first_artist}::{norm_title}"
+            for track in self._data.get("tracks", []):
+                track_key = self._make_track_key(track)
+                if track_key == fallback_key:
+                    return track
 
         return None
     
@@ -178,8 +213,12 @@ class StateManager:
             file_size_bytes: File size in bytes (optional, will be calculated if 0)
             storage_hash: Content hash for deduplicated storage (v2 only)
         """
-        # Check if already exists
-        existing = self.get_track(track_info.get("title", ""), track_info.get("artist", ""))
+        # Check if already exists (using spotify_id if available)
+        existing = self.get_track(
+            track_info.get("title", ""),
+            track_info.get("artist", ""),
+            track_info.get("spotify_id", "")
+        )
         file_size_mb = file_size_bytes / 1024 / 1024 if file_size_bytes else self._get_file_size(filename)
         if existing:
             # Update existing entry
@@ -206,12 +245,12 @@ class StateManager:
             self._data["tracks"].append(track)
     
     def remove_track(self, track_info: Dict):
-        """Remove a track from the manifest"""
-        key = f"{_normalize_text(track_info.get('artist', '')).lower().strip()}::{_normalize_text(track_info.get('title', '')).lower().strip()}"
+        """Remove a track from the manifest using spotify_id or artist/title."""
+        remove_key = self._make_track_key(track_info)
 
         self._data["tracks"] = [
             t for t in self._data["tracks"]
-            if f"{_normalize_text(t.get('artist', '')).lower().strip()}::{_normalize_text(t.get('title', '')).lower().strip()}" != key
+            if self._make_track_key(t) != remove_key
         ]
     
     def update_playlist_info(self, url: str, name: str):
