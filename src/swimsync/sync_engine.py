@@ -53,6 +53,7 @@ class SyncEngine:
     def __init__(self, config, state_manager):
         self.config = config
         self.state = state_manager
+        self._lock = threading.Lock()  # Thread safety for shared state
         self._cancelled = False
         self._current_process: Optional[subprocess.Popen] = None
         self._spotdl_path = find_spotdl()
@@ -460,17 +461,30 @@ class SyncEngine:
 
             # Check stderr for errors
             if "No results found" in stderr or "Could not find" in stderr:
+                print(f"Download failed for '{track.get('title')}': No matching audio found")
                 return False, 0
 
-            # If no obvious error, assume success if exit code is 0
-            return self._current_process is None or True, 0
+            # No file found - download likely failed
+            print(f"Download failed for '{track.get('title')}': File not created")
+            return False, 0
 
         except subprocess.TimeoutExpired:
             if self._current_process:
                 self._current_process.kill()
                 self._current_process = None
+            print(f"Download timeout for '{track.get('title')}'")
+            return False, 0
+        except FileNotFoundError:
+            print(f"spotDL not found at {self._spotdl_path}")
+            return False, 0
+        except PermissionError as e:
+            print(f"Permission denied for '{track.get('title')}': {e}")
+            return False, 0
+        except OSError as e:
+            print(f"OS error downloading '{track.get('title')}': {e}")
             return False, 0
         except Exception as e:
+            print(f"Unexpected error downloading '{track.get('title')}': {type(e).__name__}: {e}")
             return False, 0
     
     def _delete_track(self, track: Dict, output_folder: Path) -> bool:
@@ -482,27 +496,34 @@ class SyncEngine:
             if filepath.exists():
                 filepath.unlink()
                 return True
-            
+
             # Try to find by partial match
             pattern = f"*{track['title']}*"
             for match in output_folder.glob(pattern):
                 if match.is_file() and match.suffix.lower() == ".mp3":
                     match.unlink()
                     return True
-            
+
             return False  # File not found
-            
-        except Exception:
+
+        except PermissionError as e:
+            print(f"Cannot delete '{filename}': file may be in use or read-only: {e}")
+            return False
+        except OSError as e:
+            print(f"File system error deleting '{filename}': {e}")
             return False
     
     def cancel(self):
-        """Cancel ongoing sync operation"""
-        self._cancelled = True
-        if self._current_process:
-            try:
-                self._current_process.terminate()
-            except:
-                pass
+        """Cancel ongoing sync operation. Thread-safe."""
+        with self._lock:
+            self._cancelled = True
+            if self._current_process:
+                try:
+                    self._current_process.terminate()
+                except ProcessLookupError:
+                    pass  # Process already terminated
+                except OSError as e:
+                    print(f"Warning: Could not terminate download process: {e}")
     
     def _track_key(self, track: Dict) -> str:
         """Generate a unique key for track comparison"""
@@ -515,12 +536,17 @@ class SyncEngine:
         """Generate safe filename for track"""
         artist = track.get("artist", "Unknown")
         title = track.get("title", "Unknown")
-        
+
         # Remove invalid filename characters
         filename = f"{artist} - {title}"
         filename = re.sub(r'[<>:"/\\|?*]', '', filename)
+        filename = filename.replace('..', '')  # Prevent path traversal
         filename = filename.strip('. ')
-        
+
+        # Ensure we have a valid filename
+        if not filename or filename in (".", ".."):
+            filename = "Unknown Track"
+
         return f"{filename}.mp3"
     
     @staticmethod
@@ -541,9 +567,9 @@ class SyncEngine:
                 timeout=10
             )
             deps["spotdl"] = result.returncode == 0
-        except:
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
-        
+
         # Check FFmpeg
         try:
             result = subprocess.run(
@@ -553,7 +579,7 @@ class SyncEngine:
                 timeout=10
             )
             deps["ffmpeg"] = result.returncode == 0
-        except:
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
         
         return deps

@@ -61,10 +61,15 @@ class ConfigManager:
     
     def save(self):
         """Save configuration to disk"""
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        
-        with open(self.config_path, 'w', encoding='utf-8') as f:
-            json.dump(self._data, f, indent=2)
+        try:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2)
+        except (IOError, OSError, PermissionError) as e:
+            # Log but don't crash - config save failure is non-fatal
+            import logging
+            logging.warning(f"Failed to save config: {e}")
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value"""

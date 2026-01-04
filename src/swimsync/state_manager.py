@@ -3,7 +3,9 @@ State Manager - Tracks downloaded files and sync state
 """
 
 import json
+import logging
 import os
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -11,12 +13,13 @@ from typing import Dict, List, Optional
 
 class StateManager:
     """Manages the local manifest of downloaded tracks"""
-    
+
     MANIFEST_FILENAME = ".swimsync_manifest.json"
-    
+
     def __init__(self, output_folder: str):
         self.output_folder = Path(output_folder)
         self.manifest_path = self.output_folder / self.MANIFEST_FILENAME
+        self._lock = threading.Lock()
         self._data = self._load()
     
     def _load(self) -> Dict:
@@ -78,10 +81,14 @@ class StateManager:
     
     def save(self):
         """Save manifest to disk"""
-        self.output_folder.mkdir(parents=True, exist_ok=True)
-        
-        with open(self.manifest_path, 'w', encoding='utf-8') as f:
-            json.dump(self._data, f, indent=2, ensure_ascii=False)
+        with self._lock:
+            try:
+                self.output_folder.mkdir(parents=True, exist_ok=True)
+
+                with open(self.manifest_path, 'w', encoding='utf-8') as f:
+                    json.dump(self._data, f, indent=2, ensure_ascii=False)
+            except (IOError, OSError, PermissionError) as e:
+                logging.warning(f"Failed to save manifest: {e}")
     
     def get_all_tracks(self) -> List[Dict]:
         """Get list of all tracked tracks"""

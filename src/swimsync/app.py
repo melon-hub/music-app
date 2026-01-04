@@ -485,8 +485,8 @@ class SwimSyncApp:
         else:
             size_gb = 0
         
-        max_gb = self.config.get("storage_limit_gb")
-        percent = min(100, (size_gb / max_gb) * 100)
+        max_gb = self.config.get("storage_limit_gb") or 32  # Default to 32GB if not set
+        percent = min(100, (size_gb / max_gb) * 100) if max_gb > 0 else 0
         
         self.storage_progress["value"] = percent
         self.storage_label.config(text=f"{size_gb:.1f} GB / {max_gb} GB")
