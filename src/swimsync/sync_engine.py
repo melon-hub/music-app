@@ -91,15 +91,18 @@ class SyncEngine:
         }
 
         req = urllib.request.Request(embed_url, headers=headers)
-        # Create SSL context that doesn't verify certs (Windows compatibility)
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
         try:
-            with urllib.request.urlopen(req, timeout=30, context=ssl_context) as response:
+            # Use default SSL context with proper certificate verification
+            with urllib.request.urlopen(req, timeout=30) as response:
                 html = response.read().decode('utf-8')
         except urllib.error.URLError as e:
-            raise Exception(f"Failed to fetch playlist page: {e}")
+            # Provide user-friendly error message for SSL issues
+            if isinstance(e.reason, ssl.SSLError):
+                raise Exception(
+                    "SSL certificate verification failed. Please check your network connection "
+                    "and ensure your system's CA certificates are up to date."
+                )
+            raise Exception("Failed to fetch playlist. Please check your internet connection.")
 
         # Extract JSON data from the page
         # Spotify embeds data in a <script id="__NEXT_DATA__"> tag
