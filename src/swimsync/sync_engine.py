@@ -241,48 +241,61 @@ class SyncEngine:
         except subprocess.TimeoutExpired:
             raise Exception("Timeout fetching playlist.")
     
+    # Minimum file size to consider valid (100KB - smaller likely corrupt/incomplete)
+    MIN_VALID_FILE_SIZE = 100 * 1024  # 100KB in bytes
+
     def compute_diff(self, playlist_tracks: List[Dict]) -> Dict[str, List[Dict]]:
         """
         Compare playlist tracks against local state.
-        Returns dict with 'new', 'existing', 'removed' lists.
+        Returns dict with 'new', 'existing', 'removed', 'suspect' lists.
+        'suspect' contains tracks with files that appear corrupt (too small).
         """
         # Get current local state
         local_tracks = self.state.get_all_tracks()
         local_by_key = {self._track_key(t): t for t in local_tracks}
-        
-        # Also scan actual files in folder
+
+        # Scan actual files in folder with sizes
         output_folder = Path(self.config.get("output_folder"))
-        existing_files = set()
+        existing_files = {}  # filename_stem -> file_size
         if output_folder.exists():
-            existing_files = {f.stem.lower() for f in output_folder.glob("*.mp3")}
-        
+            for f in output_folder.glob("*.mp3"):
+                existing_files[f.stem.lower()] = f.stat().st_size
+
         new_tracks = []
         existing_tracks = []
+        suspect_tracks = []  # Potentially corrupt files
         playlist_keys = set()
-        
+
         for track in playlist_tracks:
             key = self._track_key(track)
             playlist_keys.add(key)
-            
+
             # Check if in manifest or on disk
             expected_filename = self._generate_filename(track).lower().replace(".mp3", "")
-            
+
             if key in local_by_key or expected_filename in existing_files:
-                existing_tracks.append(track)
+                # File exists - check if it's potentially corrupt
+                file_size = existing_files.get(expected_filename, 0)
+                if file_size > 0 and file_size < self.MIN_VALID_FILE_SIZE:
+                    track["_suspect_reason"] = f"File too small ({file_size // 1024}KB)"
+                    suspect_tracks.append(track)
+                else:
+                    existing_tracks.append(track)
             else:
                 new_tracks.append(track)
-        
+
         # Find removed tracks (in local state but not in playlist)
         removed_tracks = []
         for track in local_tracks:
             key = self._track_key(track)
             if key not in playlist_keys:
                 removed_tracks.append(track)
-        
+
         return {
             "new": new_tracks,
             "existing": existing_tracks,
-            "removed": removed_tracks
+            "removed": removed_tracks,
+            "suspect": suspect_tracks
         }
     
     def sync(
@@ -321,6 +334,11 @@ class SyncEngine:
             current += 1
             track_name = f"{track['title']} - {track['artist']}"
 
+            # If this is a suspect/corrupt file, delete it first so spotDL will re-download
+            if track.get("_suspect_reason"):
+                self._delete_track(track, output_folder)
+                self.state.remove_track(track)
+
             if progress_callback:
                 elapsed = time.time() - sync_start_time
                 speed = (total_bytes / 1024 / 1024) / elapsed if elapsed > 0 else 0
@@ -339,6 +357,7 @@ class SyncEngine:
                 downloaded += 1
                 total_bytes += file_size
                 self.state.add_track(track, self._generate_filename(track), file_size)
+                self.state.save()  # Save after each track for crash recovery
                 if progress_callback:
                     elapsed = time.time() - sync_start_time
                     speed = (total_bytes / 1024 / 1024) / elapsed if elapsed > 0 else 0

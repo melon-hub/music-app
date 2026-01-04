@@ -279,56 +279,72 @@ class SwimSyncApp:
         self.loading_overlay.hide()
         self.playlist_tracks = tracks
         self.sync_preview = preview
-        
+
         # Update playlist info
         self.playlist_info_var.set(f"Playlist: {name} ({len(tracks)} tracks)")
-        
+
         # Clear and populate tree
         for item in self.tree.get_children():
             self.tree.delete(item)
-        
+
         # Add tracks with status tags
         for track in preview["new"]:
             self.tree.insert("", "end", values=(
                 f"{track['title']} — {track['artist']}",
                 "● New"
             ), tags=("new",))
-        
+
+        # Show suspect/corrupt files first with warning
+        for track in preview.get("suspect", []):
+            reason = track.get("_suspect_reason", "Possibly corrupt")
+            self.tree.insert("", "end", values=(
+                f"{track['title']} — {track['artist']}",
+                f"⚠ {reason}"
+            ), tags=("suspect",))
+
         for track in preview["existing"]:
             self.tree.insert("", "end", values=(
                 f"{track['title']} — {track['artist']}",
                 "✓ Exists"
             ), tags=("existing",))
-        
+
         for track in preview["removed"]:
             self.tree.insert("", "end", values=(
                 f"{track['title']} — {track['artist']}",
                 "✗ Removed"
             ), tags=("removed",))
-        
+
         # Apply tag colors
         self.tree.tag_configure("new", foreground="#28a745")
+        self.tree.tag_configure("suspect", foreground="#fd7e14")  # Orange warning
         self.tree.tag_configure("existing", foreground="#6c757d")
         self.tree.tag_configure("removed", foreground="#dc3545")
-        
+
         # Update summary
         new_count = len(preview["new"])
+        suspect_count = len(preview.get("suspect", []))
         removed_count = len(preview["removed"])
-        est_size = new_count * 8  # Rough estimate: 8MB per track
-        
+        download_count = new_count + suspect_count
+        est_size = download_count * 8  # Rough estimate: 8MB per track
+
         summary = f"{len(tracks)} tracks │ {new_count} new │ {removed_count} removed"
-        if new_count > 0:
+        if suspect_count > 0:
+            summary += f" │ {suspect_count} suspect"
+        if download_count > 0:
             summary += f" │ ~{est_size} MB to download"
         self.summary_var.set(summary)
-        
-        # Enable sync if there's work to do
-        if new_count > 0 or (removed_count > 0 and self.delete_removed_var.get()):
+
+        # Enable sync if there's work to do (new tracks OR suspect tracks to re-download)
+        if download_count > 0 or (removed_count > 0 and self.delete_removed_var.get()):
             self.sync_btn.config(state="normal")
         else:
             self.sync_btn.config(state="disabled")
-        
+
         self.load_btn.config(state="normal")
-        self.status_var.set("Playlist loaded - review changes and click Sync")
+        status_msg = "Playlist loaded - review changes and click Sync"
+        if suspect_count > 0:
+            status_msg = f"⚠ {suspect_count} suspect file(s) will be re-downloaded"
+        self.status_var.set(status_msg)
         self._update_storage_display()
     
     def _on_load_error(self, error: str):
@@ -343,11 +359,15 @@ class SwimSyncApp:
         """Begin the sync process"""
         if self.is_syncing:
             return
-        
-        new_count = len(self.sync_preview["new"])
+
+        new_tracks = self.sync_preview["new"]
+        suspect_tracks = self.sync_preview.get("suspect", [])
         removed_count = len(self.sync_preview["removed"])
         delete_removed = self.delete_removed_var.get()
-        
+
+        # Combine new + suspect tracks for download (suspect files will be re-downloaded)
+        tracks_to_download = new_tracks + suspect_tracks
+
         # Confirm if deleting
         if delete_removed and removed_count > 0:
             if not messagebox.askyesno(
@@ -355,7 +375,7 @@ class SwimSyncApp:
                 f"This will delete {removed_count} track(s) that were removed from the playlist.\n\nContinue?"
             ):
                 return
-        
+
         self.is_syncing = True
         self.sync_btn.config(state="disabled")
         self.load_btn.config(state="disabled")
@@ -369,12 +389,12 @@ class SwimSyncApp:
         def on_progress(current: int, total: int, track_name: str, status: str, extra: dict = None):
             self.root.after(0, lambda c=current, t=total, n=track_name, s=status, e=extra:
                             self._update_sync_progress(c, t, n, s, e or {}))
-        
+
         # Run sync in thread
         def sync_thread():
             try:
                 results = self.sync_engine.sync(
-                    self.sync_preview["new"],
+                    tracks_to_download,
                     self.sync_preview["removed"] if delete_removed else [],
                     progress_callback=on_progress
                 )
