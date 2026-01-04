@@ -70,7 +70,7 @@ class SyncEngine:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=180  # 3 min to allow for Spotify rate limit retries
             )
             
             if result.returncode != 0:
@@ -114,7 +114,7 @@ class SyncEngine:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=180  # 3 min to allow for Spotify rate limit retries
             )
             
             # Parse output - spotDL prints track info line by line
