@@ -10,6 +10,7 @@ import re
 import json
 import logging
 import secrets
+import shutil
 import threading
 import subprocess
 from pathlib import Path
@@ -558,6 +559,7 @@ def get_playlists():
             }
             for p in playlists
         ],
+        "current_playlist_id": current_playlist_id,
         "primary_playlist_id": primary.id if primary else None
     })
 
@@ -733,7 +735,7 @@ def open_playlist_folder(playlist_id):
             folder_path = folder_path.replace('/mnt/c/', 'C:\\').replace('/mnt/d/', 'D:\\').replace('/', '\\')
 
         # Open folder based on platform
-        if sys.platform == 'win32' or 'microsoft' in os.uname().release.lower():
+        if sys.platform == 'win32' or _is_wsl():
             # Windows or WSL
             subprocess.run(['explorer.exe', folder_path], check=False)
         elif sys.platform == 'darwin':
@@ -827,6 +829,535 @@ def repair_library():
             "success": False,
             "error": result.error
         }), 500
+
+
+# ============================================================================
+# Device Copy API (Copy to Device Wizard)
+# ============================================================================
+
+# Device copy state
+device_copy_status = {
+    "is_copying": False,
+    "current": 0,
+    "total": 0,
+    "current_track": "",
+    "status": "idle",
+    "error": None,
+    "copied_count": 0,
+    "skipped_count": 0,
+    "failed_count": 0,
+    "bytes_copied": 0,
+    "total_bytes": 0
+}
+device_copy_thread = None
+device_copy_lock = threading.Lock()
+
+
+def _is_wsl():
+    """Check if running in Windows Subsystem for Linux."""
+    if sys.platform != 'linux':
+        return False
+    try:
+        return 'microsoft' in os.uname().release.lower()
+    except Exception:
+        return False
+
+
+def _get_volume_label_windows(drive_path: str) -> str:
+    """Get volume label for a Windows drive."""
+    try:
+        import ctypes
+        volume_name = ctypes.create_unicode_buffer(261)
+        ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(drive_path),
+            volume_name, 261,
+            None, None, None, None, 0
+        )
+        return volume_name.value if volume_name.value else ""
+    except Exception:
+        return ""
+
+
+def _get_volume_label_wsl(letter: str) -> str:
+    """Get volume label for a drive in WSL using PowerShell."""
+    try:
+        result = subprocess.run(
+            ['powershell.exe', '-Command',
+             f"(Get-Volume -DriveLetter {letter}).FileSystemLabel"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _get_free_space_gb(path: str) -> float:
+    """Get free space in GB for a path, cross-platform."""
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                ctypes.c_wchar_p(path), None, None, ctypes.pointer(free_bytes)
+            )
+            return free_bytes.value / (1024**3)
+        elif _is_wsl():
+            result = subprocess.run(
+                ['df', '-B1', path], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split('\n')[1].split()
+                if len(parts) >= 4:
+                    return int(parts[3]) / (1024**3)
+            return 0
+        else:
+            stat = os.statvfs(path)
+            return (stat.f_bavail * stat.f_frsize) / (1024**3)
+    except Exception:
+        return 0
+
+
+def _build_drive_info(path: str, letter: str, volume_label: str,
+                      free_bytes: int, total_bytes: int) -> dict:
+    """Build a drive info dictionary with consistent structure."""
+    display_name = f"{volume_label} ({letter}:)" if volume_label else f"Drive ({letter}:)"
+    return {
+        "path": path,
+        "letter": letter,
+        "name": display_name,
+        "volume_label": volume_label,
+        "free_gb": round(free_bytes / (1024**3), 2),
+        "total_gb": round(total_bytes / (1024**3), 2),
+        "is_removable": letter not in ['C', 'D']
+    }
+
+
+def _get_available_drives():
+    """Get list of available drives/volumes."""
+    import string
+    drives = []
+    is_wsl = _is_wsl()
+
+    if sys.platform == 'win32':
+        # Native Windows - check drive letters
+        import ctypes
+        for letter in string.ascii_uppercase:
+            drive_path = f"{letter}:\\"
+            if os.path.exists(drive_path):
+                try:
+                    free_bytes = ctypes.c_ulonglong(0)
+                    total_bytes = ctypes.c_ulonglong(0)
+                    ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                        ctypes.c_wchar_p(drive_path),
+                        None, ctypes.pointer(total_bytes), ctypes.pointer(free_bytes)
+                    )
+                    if total_bytes.value > 0:
+                        volume_label = _get_volume_label_windows(drive_path)
+                        drives.append(_build_drive_info(
+                            drive_path, letter, volume_label,
+                            free_bytes.value, total_bytes.value
+                        ))
+                except Exception as e:
+                    logging.debug(f"Could not get info for drive {letter}: {e}")
+
+    elif is_wsl:
+        # WSL - check /mnt/c, /mnt/d, etc.
+        for letter in string.ascii_uppercase:
+            drive_path = f"/mnt/{letter.lower()}"
+            if os.path.exists(drive_path):
+                try:
+                    result = subprocess.run(
+                        ['df', '-B1', drive_path],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) > 1:
+                            parts = lines[1].split()
+                            if len(parts) >= 4:
+                                total_bytes = int(parts[1])
+                                free_bytes = int(parts[3])
+                                volume_label = _get_volume_label_wsl(letter)
+                                drives.append(_build_drive_info(
+                                    drive_path, letter, volume_label,
+                                    free_bytes, total_bytes
+                                ))
+                except Exception as e:
+                    logging.debug(f"Could not get info for drive {letter}: {e}")
+    else:
+        # Linux/macOS - check /media and /Volumes
+        mount_points = ['/media', '/Volumes', '/run/media']
+        for mount_base in mount_points:
+            if os.path.exists(mount_base):
+                for name in os.listdir(mount_base):
+                    mount_path = os.path.join(mount_base, name)
+                    if os.path.isdir(mount_path):
+                        try:
+                            stat = os.statvfs(mount_path)
+                            total_bytes = stat.f_blocks * stat.f_frsize
+                            free_bytes = stat.f_bavail * stat.f_frsize
+                            if total_bytes > 0:
+                                drives.append({
+                                    "path": mount_path,
+                                    "letter": "",
+                                    "name": name,
+                                    "volume_label": name,
+                                    "free_gb": round(free_bytes / (1024**3), 2),
+                                    "total_gb": round(total_bytes / (1024**3), 2),
+                                    "is_removable": True
+                                })
+                        except Exception:
+                            pass
+
+    # Sort drives: SWIM* devices first, then by letter/name
+    def sort_key(drive):
+        label = (drive.get("volume_label") or "").upper()
+        is_swim = label.startswith("SWIM")
+        # SWIM devices first (0), others second (1), then by letter or name
+        return (0 if is_swim else 1, drive.get("letter") or drive.get("name", ""))
+
+    drives.sort(key=sort_key)
+    return drives
+
+
+def _scan_folder_for_tracks(folder_path: str) -> dict:
+    """Scan a folder for MP3 files and return track info."""
+    folder = Path(folder_path)
+    if not folder.exists():
+        return {"tracks": [], "error": "Folder does not exist"}
+
+    tracks = []
+    for mp3_file in folder.glob("*.mp3"):
+        stem = mp3_file.stem
+        # Parse "Artist - Title" format
+        if " - " in stem:
+            parts = stem.split(" - ", 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+        else:
+            artist = "Unknown"
+            title = stem
+
+        try:
+            size_bytes = mp3_file.stat().st_size
+        except OSError:
+            size_bytes = 0
+
+        tracks.append({
+            "filename": mp3_file.name,
+            "artist": artist,
+            "title": title,
+            "size_bytes": size_bytes,
+            "size_mb": round(size_bytes / (1024 * 1024), 2)
+        })
+
+    return {"tracks": tracks}
+
+
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    """Get list of available drives/devices."""
+    drives = _get_available_drives()
+    return jsonify({
+        "drives": drives,
+        "last_used": config.get("last_device_path") if config else None
+    })
+
+
+@app.route('/api/devices/browse', methods=['POST'])
+def browse_folder():
+    """Get contents of a folder for browsing."""
+    data = request.json
+    path = data.get('path', '').strip()
+
+    if not path:
+        return jsonify({"error": "Path is required"}), 400
+
+    # Security validation
+    is_valid, error_msg = _validate_path(path)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    folder = Path(path)
+    if not folder.exists():
+        return jsonify({"error": "Path does not exist"}), 404
+
+    if not folder.is_dir():
+        return jsonify({"error": "Path is not a directory"}), 400
+
+    # List subdirectories only
+    folders = []
+    try:
+        for item in sorted(folder.iterdir()):
+            if item.is_dir() and not item.name.startswith('.'):
+                folders.append({
+                    "name": item.name,
+                    "path": str(item)
+                })
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+
+    return jsonify({
+        "path": str(folder),
+        "parent": str(folder.parent) if folder.parent != folder else None,
+        "folders": folders
+    })
+
+
+@app.route('/api/devices/scan', methods=['POST'])
+def scan_device():
+    """Scan a device/folder and compare with current playlist."""
+    data = request.json
+    path = data.get('path', '').strip()
+
+    if not path:
+        return jsonify({"error": "Path is required"}), 400
+
+    is_valid, error_msg = _validate_path(path)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    if not current_playlist_id:
+        return jsonify({"error": "No playlist selected"}), 400
+
+    # Scan destination folder
+    scan_result = _scan_folder_for_tracks(path)
+    if "error" in scan_result:
+        return jsonify({"error": scan_result["error"]}), 400
+
+    device_tracks = scan_result["tracks"]
+    device_filenames = {t["filename"].lower() for t in device_tracks}
+
+    # Get current playlist tracks
+    playlist_tracks = library.get_playlist_tracks(current_playlist_id) if library else []
+
+    # Compare
+    matched = []  # On device and in playlist
+    missing = []  # In playlist but not on device
+    extra = []    # On device but not in playlist
+
+    playlist_filenames = set()
+    for track in playlist_tracks:
+        filename = track.filename
+        playlist_filenames.add(filename.lower())
+
+        if filename.lower() in device_filenames:
+            matched.append({
+                "filename": filename,
+                "artist": track.artist,
+                "title": track.title
+            })
+        else:
+            missing.append({
+                "filename": filename,
+                "artist": track.artist,
+                "title": track.title,
+                "size_mb": track.file_size_mb
+            })
+
+    for device_track in device_tracks:
+        if device_track["filename"].lower() not in playlist_filenames:
+            extra.append(device_track)
+
+    # Calculate sizes
+    missing_size_mb = sum(t.get("size_mb", 8) for t in missing)
+    free_gb = _get_free_space_gb(path)
+
+    return jsonify({
+        "path": path,
+        "matched": matched,
+        "missing": missing,
+        "extra": extra,
+        "matched_count": len(matched),
+        "missing_count": len(missing),
+        "extra_count": len(extra),
+        "missing_size_mb": round(missing_size_mb, 1),
+        "free_gb": round(free_gb, 2),
+        "has_space": free_gb > (missing_size_mb / 1024) * 1.1  # 10% buffer
+    })
+
+
+@app.route('/api/devices/copy', methods=['POST'])
+def start_device_copy():
+    """Start copying tracks to device."""
+    global device_copy_status, device_copy_thread
+
+    with device_copy_lock:
+        if device_copy_status["is_copying"]:
+            return jsonify({"error": "Copy already in progress"}), 400
+
+    data = request.json
+    destination = data.get('destination', '').strip()
+    mode = data.get('mode', 'add')  # add, sync, replace
+
+    if not destination:
+        return jsonify({"error": "Destination is required"}), 400
+
+    is_valid, error_msg = _validate_path(destination)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    if not current_playlist_id:
+        return jsonify({"error": "No playlist selected"}), 400
+
+    if mode not in ['add', 'sync', 'replace']:
+        return jsonify({"error": "Invalid mode"}), 400
+
+    # Save last used path
+    config.set("last_device_path", destination)
+
+    # Get playlist tracks
+    playlist_tracks = library.get_playlist_tracks(current_playlist_id) if library else []
+    if not playlist_tracks:
+        return jsonify({"error": "No tracks in playlist"}), 400
+
+    # Scan destination
+    scan_result = _scan_folder_for_tracks(destination)
+    device_filenames = {t["filename"].lower() for t in scan_result.get("tracks", [])}
+
+    # Determine what to copy/delete
+    tracks_to_copy = []
+    tracks_to_delete = []
+
+    playlist_filenames = set()
+    library_path = Path(config.get("output_folder"))
+
+    for track in playlist_tracks:
+        playlist_filenames.add(track.filename.lower())
+
+        if mode == 'replace' or track.filename.lower() not in device_filenames:
+            # Get source path (resolve symlink)
+            source_path = library_path / "playlists" / current_playlist_id / track.filename
+            if source_path.exists() or source_path.is_symlink():
+                # Resolve symlink to get actual file
+                try:
+                    real_path = source_path.resolve()
+                    if real_path.exists():
+                        tracks_to_copy.append({
+                            "source": str(real_path),
+                            "filename": track.filename,
+                            "artist": track.artist,
+                            "title": track.title,
+                            "size_bytes": real_path.stat().st_size
+                        })
+                except Exception as e:
+                    logging.warning(f"Could not resolve {source_path}: {e}")
+
+    if mode in ['sync', 'replace']:
+        # Find files to delete (on device but not in playlist)
+        for device_track in scan_result.get("tracks", []):
+            if device_track["filename"].lower() not in playlist_filenames:
+                tracks_to_delete.append({
+                    "path": str(Path(destination) / device_track["filename"]),
+                    "filename": device_track["filename"]
+                })
+
+    if not tracks_to_copy and not tracks_to_delete:
+        return jsonify({"error": "Nothing to copy or delete"}), 400
+
+    total_bytes = sum(t["size_bytes"] for t in tracks_to_copy)
+
+    # Reset status
+    with device_copy_lock:
+        device_copy_status = {
+            "is_copying": True,
+            "current": 0,
+            "total": len(tracks_to_copy),
+            "current_track": "",
+            "status": "starting",
+            "error": None,
+            "copied_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "deleted_count": 0,
+            "bytes_copied": 0,
+            "total_bytes": total_bytes,
+            "mode": mode
+        }
+
+    def copy_worker():
+        global device_copy_status
+        dest_path = Path(destination)
+        dest_path.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Delete files first if syncing
+            if tracks_to_delete:
+                with device_copy_lock:
+                    device_copy_status["status"] = "deleting"
+
+                for track in tracks_to_delete:
+                    try:
+                        Path(track["path"]).unlink()
+                        with device_copy_lock:
+                            device_copy_status["deleted_count"] += 1
+                    except Exception as e:
+                        logging.warning(f"Failed to delete {track['filename']}: {e}")
+
+            # Copy files
+            for i, track in enumerate(tracks_to_copy):
+                with device_copy_lock:
+                    device_copy_status["current"] = i + 1
+                    device_copy_status["current_track"] = f"{track['artist']} - {track['title']}"
+                    device_copy_status["status"] = "copying"
+
+                source = Path(track["source"])
+                dest = dest_path / track["filename"]
+
+                try:
+                    shutil.copy2(source, dest)
+                    with device_copy_lock:
+                        device_copy_status["copied_count"] += 1
+                        device_copy_status["bytes_copied"] += track["size_bytes"]
+                except Exception as e:
+                    logging.error(f"Failed to copy {track['filename']}: {e}")
+                    with device_copy_lock:
+                        device_copy_status["failed_count"] += 1
+
+            with device_copy_lock:
+                device_copy_status["status"] = "completed"
+
+        except Exception as e:
+            logging.error(f"Copy failed: {e}")
+            with device_copy_lock:
+                device_copy_status["error"] = str(e)
+                device_copy_status["status"] = "error"
+        finally:
+            with device_copy_lock:
+                device_copy_status["is_copying"] = False
+
+    device_copy_thread = threading.Thread(target=copy_worker, daemon=True)
+    device_copy_thread.start()
+
+    return jsonify({
+        "success": True,
+        "tracks_to_copy": len(tracks_to_copy),
+        "tracks_to_delete": len(tracks_to_delete),
+        "total_size_mb": round(total_bytes / (1024 * 1024), 1)
+    })
+
+
+@app.route('/api/devices/copy/status', methods=['GET'])
+def get_device_copy_status():
+    """Get current device copy status."""
+    with device_copy_lock:
+        return jsonify(device_copy_status.copy())
+
+
+@app.route('/api/devices/copy/cancel', methods=['POST'])
+def cancel_device_copy():
+    """Cancel current device copy operation."""
+    global device_copy_status
+
+    with device_copy_lock:
+        if not device_copy_status["is_copying"]:
+            return jsonify({"error": "No copy in progress"}), 400
+        device_copy_status["status"] = "cancelled"
+        device_copy_status["is_copying"] = False
+
+    return jsonify({"success": True})
 
 
 def run_server(host='127.0.0.1', port=5000, debug=False):

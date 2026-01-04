@@ -428,6 +428,14 @@
                             Save to Library
                         </button>
                         <button id="sync-btn" class="btn btn-primary btn-large" disabled>Download Missing</button>
+                        <button id="copy-to-device-btn" class="btn btn-secondary" title="Copy playlist to your device">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                <path d="M12 9v6"/>
+                                <path d="M9 12l3 3 3-3"/>
+                            </svg>
+                            Copy to Device
+                        </button>
                         <button id="cancel-btn" class="btn btn-secondary" disabled>Cancel</button>
                         <label class="toggle-label">
                             <input type="checkbox" id="delete-removed-toggle">
@@ -808,6 +816,184 @@
             <div class="wizard-footer">
                 <button id="wizard-back-btn" class="btn btn-secondary hidden">Back</button>
                 <button id="wizard-next-btn" class="btn btn-primary">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Copy to Device Wizard Modal -->
+    <div id="device-wizard-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="device-wizard-title">
+        <div class="wizard-modal device-wizard-modal">
+            <div class="wizard-header">
+                <div class="wizard-progress">
+                    <div class="wizard-step active" data-step="1">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">Select</span>
+                    </div>
+                    <div class="wizard-step-line"></div>
+                    <div class="wizard-step" data-step="2">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">Review</span>
+                    </div>
+                    <div class="wizard-step-line"></div>
+                    <div class="wizard-step" data-step="3">
+                        <span class="wizard-step-dot"></span>
+                        <span class="wizard-step-label">Copy</span>
+                    </div>
+                </div>
+                <button id="device-wizard-close-btn" class="wizard-close-btn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Step 1: Select Destination -->
+            <div class="wizard-content" id="device-wizard-step-1">
+                <h2 id="device-wizard-title" class="wizard-title">Copy to Device</h2>
+                <p class="wizard-description">Select where to copy your music</p>
+
+                <div class="device-drives-section">
+                    <h3 class="device-section-title">Available Drives</h3>
+                    <div class="device-drives-list" id="device-drives-list">
+                        <div class="device-loading">
+                            <div class="spinner"></div>
+                            <span>Scanning for drives...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="device-folder-section">
+                    <h3 class="device-section-title">Or browse to folder</h3>
+                    <div class="device-folder-browser">
+                        <div class="device-folder-path">
+                            <input type="text" id="device-folder-path" class="wizard-input" placeholder="Enter or browse to folder path...">
+                            <button id="device-browse-up-btn" class="btn btn-icon" title="Go up one folder">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                    <path d="M17 11l-5-5-5 5"/>
+                                    <path d="M17 18l-5-5-5 5"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="device-folder-list" id="device-folder-list">
+                            <!-- Folders listed here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Review Changes -->
+            <div class="wizard-content hidden" id="device-wizard-step-2">
+                <h2 class="wizard-title">Review Changes</h2>
+                <div class="device-scan-loading hidden" id="device-scan-loading">
+                    <div class="spinner"></div>
+                    <span>Scanning destination...</span>
+                </div>
+                <div class="device-scan-result" id="device-scan-result">
+                    <div class="device-destination-info">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span id="device-destination-path">/path/to/folder</span>
+                    </div>
+
+                    <div class="device-stats-grid">
+                        <div class="device-stat">
+                            <span class="device-stat-value device-stat-existing" id="device-matched-count">0</span>
+                            <span class="device-stat-label">Already on device</span>
+                        </div>
+                        <div class="device-stat">
+                            <span class="device-stat-value device-stat-new" id="device-missing-count">0</span>
+                            <span class="device-stat-label">To copy</span>
+                        </div>
+                        <div class="device-stat">
+                            <span class="device-stat-value device-stat-extra" id="device-extra-count">0</span>
+                            <span class="device-stat-label">Extra on device</span>
+                        </div>
+                    </div>
+
+                    <div class="device-space-info">
+                        <div class="device-space-row">
+                            <span>Space needed:</span>
+                            <span id="device-space-needed">0 MB</span>
+                        </div>
+                        <div class="device-space-row">
+                            <span>Free space:</span>
+                            <span id="device-free-space">0 GB</span>
+                        </div>
+                        <div class="device-space-warning hidden" id="device-space-warning">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                            <span>Not enough space on device</span>
+                        </div>
+                    </div>
+
+                    <div class="device-copy-mode">
+                        <h3 class="device-section-title">Copy Mode</h3>
+                        <div class="device-mode-options">
+                            <label class="device-mode-option">
+                                <input type="radio" name="device-copy-mode" value="add" checked>
+                                <div class="device-mode-content">
+                                    <span class="device-mode-title">Add new only</span>
+                                    <span class="device-mode-desc">Copy missing tracks, keep everything else</span>
+                                </div>
+                            </label>
+                            <label class="device-mode-option">
+                                <input type="radio" name="device-copy-mode" value="sync">
+                                <div class="device-mode-content">
+                                    <span class="device-mode-title">Full sync</span>
+                                    <span class="device-mode-desc">Copy missing + remove extra tracks</span>
+                                </div>
+                            </label>
+                            <label class="device-mode-option">
+                                <input type="radio" name="device-copy-mode" value="replace">
+                                <div class="device-mode-content">
+                                    <span class="device-mode-title">Replace all</span>
+                                    <span class="device-mode-desc">Delete everything and copy fresh</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Copy Progress -->
+            <div class="wizard-content hidden" id="device-wizard-step-3">
+                <h2 class="wizard-title">Copying to Device</h2>
+                <div class="device-copy-progress">
+                    <div class="device-progress-ring">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="progress-bg" cx="50" cy="50" r="45"/>
+                            <circle id="device-progress-circle" class="progress-fill" cx="50" cy="50" r="45"/>
+                        </svg>
+                        <span id="device-copy-percent" class="progress-text">0%</span>
+                    </div>
+                    <div class="device-copy-status">
+                        <p id="device-copy-track" class="device-copy-track">Preparing...</p>
+                        <div class="device-copy-stats">
+                            <span><span id="device-copy-current">0</span> / <span id="device-copy-total">0</span> tracks</span>
+                            <span id="device-copy-size">0 MB copied</span>
+                        </div>
+                    </div>
+                    <div class="device-copy-complete hidden" id="device-copy-complete">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                        <h3>Copy Complete!</h3>
+                        <p id="device-copy-summary">0 tracks copied successfully</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="wizard-footer">
+                <button id="device-wizard-back-btn" class="btn btn-secondary hidden">Back</button>
+                <button id="device-wizard-next-btn" class="btn btn-primary">
+                    <span id="device-wizard-next-text">Continue</span>
+                </button>
             </div>
         </div>
     </div>

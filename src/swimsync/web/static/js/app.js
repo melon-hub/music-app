@@ -331,6 +331,19 @@ async function init() {
     await loadPlaylists();
     await updateStorageDisplay();
     determineInitialView();
+
+    // If we have a current playlist, reload its data from Spotify
+    if (currentPlaylistId) {
+        const playlist = playlists.find(p => p.id === currentPlaylistId);
+        if (playlist) {
+            updatePlaylistDetailHeader(playlist);
+            // Load playlist from Spotify if URL is set
+            if (playlist.spotify_url) {
+                elements.playlistUrl.value = playlist.spotify_url;
+                await loadPlaylist();
+            }
+        }
+    }
 }
 
 function setupEventListeners() {
@@ -1141,9 +1154,9 @@ function getTrackStatusIcon(status) {
 
 function updateSidebarCountLive(completedCount) {
     // Find current playlist in sidebar and update count
-    const playlistItem = document.querySelector(`.playlist-item[data-id="${currentPlaylistId}"]`);
+    const playlistItem = document.querySelector(`.playlist-nav-item[data-playlist-id="${currentPlaylistId}"]`);
     if (playlistItem) {
-        const countEl = playlistItem.querySelector('.playlist-count');
+        const countEl = playlistItem.querySelector('.playlist-nav-item-count');
         if (countEl) {
             // Get existing count and add completed downloads
             const existingCount = syncPreview?.existing?.length || 0;
@@ -1303,7 +1316,7 @@ function renderPlaylistNav() {
         if (playlist.id === currentPlaylistId) {
             item.classList.add('active');
         }
-        item.dataset.playlistId = playlist.id;
+        item.dataset.playlistId = playlist.id;  // becomes data-playlist-id in HTML
 
         // Color dot
         const dot = document.createElement('span');
@@ -2025,3 +2038,505 @@ function confirmAndStartSync() {
     closeSyncConfirmModal();
     startSync();
 }
+
+// ==================== DEVICE COPY WIZARD ====================
+
+let deviceWizardStep = 1;
+let deviceWizardData = {
+    destination: '',
+    scanResult: null,
+    copyMode: 'add'
+};
+let deviceCopyPollInterval = null;
+
+// Device wizard elements
+const deviceElements = {
+    overlay: document.getElementById('device-wizard-overlay'),
+    closeBtn: document.getElementById('device-wizard-close-btn'),
+    backBtn: document.getElementById('device-wizard-back-btn'),
+    nextBtn: document.getElementById('device-wizard-next-btn'),
+    nextText: document.getElementById('device-wizard-next-text'),
+    steps: document.querySelectorAll('#device-wizard-overlay .wizard-step'),
+    contents: [
+        document.getElementById('device-wizard-step-1'),
+        document.getElementById('device-wizard-step-2'),
+        document.getElementById('device-wizard-step-3')
+    ],
+    drivesList: document.getElementById('device-drives-list'),
+    folderPath: document.getElementById('device-folder-path'),
+    folderList: document.getElementById('device-folder-list'),
+    browseUpBtn: document.getElementById('device-browse-up-btn'),
+    scanLoading: document.getElementById('device-scan-loading'),
+    scanResult: document.getElementById('device-scan-result'),
+    destinationPath: document.getElementById('device-destination-path'),
+    matchedCount: document.getElementById('device-matched-count'),
+    missingCount: document.getElementById('device-missing-count'),
+    extraCount: document.getElementById('device-extra-count'),
+    spaceNeeded: document.getElementById('device-space-needed'),
+    freeSpace: document.getElementById('device-free-space'),
+    spaceWarning: document.getElementById('device-space-warning'),
+    progressCircle: document.getElementById('device-progress-circle'),
+    copyPercent: document.getElementById('device-copy-percent'),
+    copyTrack: document.getElementById('device-copy-track'),
+    copyCurrent: document.getElementById('device-copy-current'),
+    copyTotal: document.getElementById('device-copy-total'),
+    copySize: document.getElementById('device-copy-size'),
+    copyComplete: document.getElementById('device-copy-complete'),
+    copySummary: document.getElementById('device-copy-summary')
+};
+
+function initDeviceWizard() {
+    // Copy to Device button
+    const copyBtn = document.getElementById('copy-to-device-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', openDeviceWizard);
+    }
+
+    // Close button
+    if (deviceElements.closeBtn) {
+        deviceElements.closeBtn.addEventListener('click', closeDeviceWizard);
+    }
+
+    // Back button
+    if (deviceElements.backBtn) {
+        deviceElements.backBtn.addEventListener('click', deviceWizardBack);
+    }
+
+    // Next button
+    if (deviceElements.nextBtn) {
+        deviceElements.nextBtn.addEventListener('click', deviceWizardNext);
+    }
+
+    // Folder path input - on Enter, browse to that path
+    if (deviceElements.folderPath) {
+        deviceElements.folderPath.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                const path = deviceElements.folderPath.value.trim();
+                if (path) {
+                    deviceWizardData.destination = path;
+                    await browseFolder(path);
+                }
+            }
+        });
+    }
+
+    // Browse up button
+    if (deviceElements.browseUpBtn) {
+        deviceElements.browseUpBtn.addEventListener('click', async () => {
+            const currentPath = deviceElements.folderPath.value.trim();
+            if (currentPath) {
+                // Go up one directory
+                const parentPath = currentPath.replace(/[\/\\][^\/\\]+$/, '') || '/';
+                await browseFolder(parentPath);
+            }
+        });
+    }
+
+    // Copy mode radio buttons
+    document.querySelectorAll('input[name="device-copy-mode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            deviceWizardData.copyMode = radio.value;
+        });
+    });
+
+    // ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && deviceElements.overlay && !deviceElements.overlay.classList.contains('hidden')) {
+            closeDeviceWizard();
+        }
+    });
+}
+
+async function openDeviceWizard() {
+    if (!currentPlaylistId) {
+        await showModal('warning', 'No Playlist', 'Please select a playlist first');
+        return;
+    }
+
+    // Reset wizard state
+    deviceWizardStep = 1;
+    deviceWizardData = {
+        destination: '',
+        scanResult: null,
+        copyMode: 'add'
+    };
+
+    // Reset UI
+    if (deviceElements.folderPath) deviceElements.folderPath.value = '';
+    document.querySelectorAll('input[name="device-copy-mode"]').forEach(radio => {
+        radio.checked = radio.value === 'add';
+    });
+
+    // Show wizard
+    if (deviceElements.overlay) {
+        deviceElements.overlay.classList.remove('hidden');
+    }
+
+    // Load drives
+    await loadDeviceDrives();
+
+    updateDeviceWizardStep();
+}
+
+function closeDeviceWizard() {
+    if (deviceElements.overlay) {
+        deviceElements.overlay.classList.add('hidden');
+    }
+    if (deviceCopyPollInterval) {
+        clearInterval(deviceCopyPollInterval);
+        deviceCopyPollInterval = null;
+    }
+}
+
+function updateDeviceWizardStep() {
+    // Update step indicators
+    deviceElements.steps.forEach((step, index) => {
+        const stepNum = index + 1;
+        step.classList.remove('active', 'completed');
+        if (stepNum === deviceWizardStep) {
+            step.classList.add('active');
+        } else if (stepNum < deviceWizardStep) {
+            step.classList.add('completed');
+        }
+    });
+
+    // Show/hide content
+    deviceElements.contents.forEach((content, index) => {
+        if (content) {
+            content.classList.toggle('hidden', index + 1 !== deviceWizardStep);
+        }
+    });
+
+    // Update buttons
+    if (deviceElements.backBtn) {
+        deviceElements.backBtn.classList.toggle('hidden', deviceWizardStep === 1 || deviceWizardStep === 3);
+    }
+    if (deviceElements.nextText) {
+        if (deviceWizardStep === 1) {
+            deviceElements.nextText.textContent = 'Continue';
+        } else if (deviceWizardStep === 2) {
+            deviceElements.nextText.textContent = 'Start Copy';
+        } else {
+            deviceElements.nextText.textContent = 'Done';
+        }
+    }
+}
+
+function deviceWizardBack() {
+    if (deviceWizardStep > 1) {
+        deviceWizardStep--;
+        updateDeviceWizardStep();
+    }
+}
+
+async function deviceWizardNext() {
+    if (deviceWizardStep === 1) {
+        // Validate destination
+        const destination = deviceElements.folderPath ? deviceElements.folderPath.value.trim() : '';
+        if (!destination) {
+            await showModal('warning', 'No Destination', 'Please select a destination folder');
+            return;
+        }
+
+        deviceWizardData.destination = destination;
+
+        // Move to step 2 and scan
+        deviceWizardStep = 2;
+        updateDeviceWizardStep();
+        await scanDestination();
+
+    } else if (deviceWizardStep === 2) {
+        // Start copy
+        deviceWizardStep = 3;
+        updateDeviceWizardStep();
+        await startDeviceCopy();
+
+    } else {
+        // Done - close wizard
+        closeDeviceWizard();
+    }
+}
+
+async function loadDeviceDrives() {
+    if (!deviceElements.drivesList) return;
+
+    deviceElements.drivesList.innerHTML = `
+        <div class="device-loading">
+            <div class="spinner"></div>
+            <span>Scanning for drives...</span>
+        </div>
+    `;
+
+    try {
+        const response = await fetch('/api/devices');
+        const data = await response.json();
+
+        if (data.drives && data.drives.length > 0) {
+            deviceElements.drivesList.innerHTML = data.drives.map(drive => {
+                const isSwim = (drive.volume_label || '').toUpperCase().startsWith('SWIM');
+                const swimClass = isSwim ? ' swim-device' : '';
+                // Select icon based on drive type
+                let icon;
+                if (isSwim) {
+                    icon = '<path d="M22 12c-2.5 0-4.5 2.5-7 2.5S9.5 12 7 12s-5 2.5-5 2.5"/><path d="M22 17c-2.5 0-4.5-2.5-7-2.5S9.5 17 7 17s-5-2.5-5-2.5"/><circle cx="12" cy="7" r="3"/>';
+                } else if (drive.is_removable) {
+                    icon = '<rect x="4" y="4" width="16" height="16" rx="2"/><line x1="4" y1="9" x2="20" y2="9"/>';
+                } else {
+                    icon = '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>';
+                }
+                return `
+                    <button class="device-drive-item${swimClass}" data-path="${escapeHtml(drive.path)}">
+                        <div class="device-drive-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                ${icon}
+                            </svg>
+                        </div>
+                        <div class="device-drive-info">
+                            <span class="device-drive-name">${escapeHtml(drive.name)}</span>
+                            <span class="device-drive-space">${drive.free_gb} GB free</span>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+
+            // Add click handlers
+            deviceElements.drivesList.querySelectorAll('.device-drive-item').forEach(item => {
+                item.addEventListener('click', async () => {
+                    // Remove selected from all
+                    deviceElements.drivesList.querySelectorAll('.device-drive-item').forEach(i =>
+                        i.classList.remove('selected'));
+                    item.classList.add('selected');
+
+                    const path = item.dataset.path;
+                    if (deviceElements.folderPath) {
+                        deviceElements.folderPath.value = path;
+                    }
+                    deviceWizardData.destination = path;
+                    await browseFolder(path);
+                });
+            });
+
+            // If last used path exists, pre-fill it
+            if (data.last_used) {
+                if (deviceElements.folderPath) {
+                    deviceElements.folderPath.value = data.last_used;
+                }
+                deviceWizardData.destination = data.last_used;
+                await browseFolder(data.last_used);
+            }
+        } else {
+            deviceElements.drivesList.innerHTML = `
+                <div class="device-no-drives">
+                    <p>No removable drives found</p>
+                    <p class="device-hint">Enter a path manually below</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        deviceElements.drivesList.innerHTML = `
+            <div class="device-error">
+                <p>Failed to scan drives</p>
+            </div>
+        `;
+    }
+}
+
+async function browseFolder(path) {
+    if (!deviceElements.folderList) return;
+
+    deviceElements.folderList.innerHTML = `
+        <div class="device-loading">
+            <div class="spinner"></div>
+            <span>Loading...</span>
+        </div>
+    `;
+
+    try {
+        const response = await fetch('/api/devices/browse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            deviceElements.folderList.innerHTML = `<div class="device-error">${escapeHtml(data.error || 'Failed to browse')}</div>`;
+            return;
+        }
+
+        if (deviceElements.folderPath) {
+            deviceElements.folderPath.value = data.path;
+        }
+        deviceWizardData.destination = data.path;
+
+        if (data.folders && data.folders.length > 0) {
+            deviceElements.folderList.innerHTML = data.folders.map(folder => `
+                <button class="device-folder-item" data-path="${escapeHtml(folder.path)}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span>${escapeHtml(folder.name)}</span>
+                </button>
+            `).join('');
+
+            deviceElements.folderList.querySelectorAll('.device-folder-item').forEach(item => {
+                item.addEventListener('click', async () => {
+                    await browseFolder(item.dataset.path);
+                });
+            });
+        } else {
+            deviceElements.folderList.innerHTML = `
+                <div class="device-empty-folder">
+                    <p>No subfolders (this folder will be used)</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        deviceElements.folderList.innerHTML = `<div class="device-error">Error browsing folder</div>`;
+    }
+}
+
+async function scanDestination() {
+    if (deviceElements.scanLoading) deviceElements.scanLoading.classList.remove('hidden');
+    if (deviceElements.scanResult) deviceElements.scanResult.classList.add('hidden');
+
+    try {
+        const response = await fetch('/api/devices/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: deviceWizardData.destination })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            await showModal('error', 'Scan Failed', data.error || 'Failed to scan destination');
+            deviceWizardStep = 1;
+            updateDeviceWizardStep();
+            return;
+        }
+
+        deviceWizardData.scanResult = data;
+
+        // Update UI
+        if (deviceElements.destinationPath) deviceElements.destinationPath.textContent = data.path;
+        if (deviceElements.matchedCount) deviceElements.matchedCount.textContent = data.matched_count;
+        if (deviceElements.missingCount) deviceElements.missingCount.textContent = data.missing_count;
+        if (deviceElements.extraCount) deviceElements.extraCount.textContent = data.extra_count;
+        if (deviceElements.spaceNeeded) deviceElements.spaceNeeded.textContent = `${data.missing_size_mb} MB`;
+        if (deviceElements.freeSpace) deviceElements.freeSpace.textContent = `${data.free_gb} GB`;
+
+        // Show/hide space warning
+        if (deviceElements.spaceWarning) {
+            deviceElements.spaceWarning.classList.toggle('hidden', data.has_space);
+        }
+
+    } catch (error) {
+        await showModal('error', 'Scan Failed', error.message);
+        deviceWizardStep = 1;
+        updateDeviceWizardStep();
+    } finally {
+        if (deviceElements.scanLoading) deviceElements.scanLoading.classList.add('hidden');
+        if (deviceElements.scanResult) deviceElements.scanResult.classList.remove('hidden');
+    }
+}
+
+async function startDeviceCopy() {
+    // Hide complete, show progress
+    if (deviceElements.copyComplete) deviceElements.copyComplete.classList.add('hidden');
+
+    // Reset progress
+    updateDeviceCopyProgress(0, 0, 0, 'Preparing...');
+
+    try {
+        const response = await fetch('/api/devices/copy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                destination: deviceWizardData.destination,
+                mode: deviceWizardData.copyMode
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            await showModal('error', 'Copy Failed', data.error || 'Failed to start copy');
+            deviceWizardStep = 2;
+            updateDeviceWizardStep();
+            return;
+        }
+
+        // Start polling for progress
+        deviceCopyPollInterval = setInterval(pollDeviceCopyStatus, 500);
+
+    } catch (error) {
+        await showModal('error', 'Copy Failed', error.message);
+        deviceWizardStep = 2;
+        updateDeviceWizardStep();
+    }
+}
+
+async function pollDeviceCopyStatus() {
+    try {
+        const response = await fetch('/api/devices/copy/status');
+        const data = await response.json();
+
+        const percent = data.total > 0 ? Math.round((data.current / data.total) * 100) : 0;
+        const sizeMB = Math.round(data.bytes_copied / (1024 * 1024));
+
+        updateDeviceCopyProgress(percent, data.current, data.total, data.current_track, sizeMB);
+
+        if (!data.is_copying) {
+            clearInterval(deviceCopyPollInterval);
+            deviceCopyPollInterval = null;
+
+            if (data.status === 'completed') {
+                showDeviceCopyComplete(data.copied_count, data.deleted_count);
+            } else if (data.status === 'error') {
+                await showModal('error', 'Copy Failed', data.error || 'An error occurred');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to poll copy status:', error);
+    }
+}
+
+function updateDeviceCopyProgress(percent, current, total, trackName, sizeMB = 0) {
+    if (deviceElements.copyPercent) deviceElements.copyPercent.textContent = `${percent}%`;
+    if (deviceElements.copyCurrent) deviceElements.copyCurrent.textContent = current;
+    if (deviceElements.copyTotal) deviceElements.copyTotal.textContent = total;
+    if (deviceElements.copyTrack) deviceElements.copyTrack.textContent = trackName || 'Preparing...';
+    if (deviceElements.copySize) deviceElements.copySize.textContent = `${sizeMB} MB copied`;
+
+    // Update progress ring
+    if (deviceElements.progressCircle) {
+        const circumference = 2 * Math.PI * 45;
+        const offset = circumference - (percent / 100) * circumference;
+        deviceElements.progressCircle.style.strokeDasharray = circumference;
+        deviceElements.progressCircle.style.strokeDashoffset = offset;
+    }
+}
+
+function showDeviceCopyComplete(copiedCount, deletedCount) {
+    if (deviceElements.copyComplete) {
+        deviceElements.copyComplete.classList.remove('hidden');
+    }
+
+    let summary = `${copiedCount} tracks copied`;
+    if (deletedCount > 0) {
+        summary += `, ${deletedCount} removed`;
+    }
+    if (deviceElements.copySummary) {
+        deviceElements.copySummary.textContent = summary;
+    }
+
+    // Update button text
+    if (deviceElements.nextText) {
+        deviceElements.nextText.textContent = 'Done';
+    }
+}
+
+// Initialize device wizard on page load
+document.addEventListener('DOMContentLoaded', initDeviceWizard);

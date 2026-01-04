@@ -332,26 +332,39 @@ class SyncEngine:
             key = self._track_key(track)
             playlist_keys.add(key)
 
-            # Check if in manifest or on disk
-            expected_filename = self._generate_filename(track).lower().replace(".mp3", "")
+            # First check if track exists in manifest (by key which uses spotify_id)
+            manifest_entry = local_by_key.get(key)
 
-            # Check if file actually exists on disk (not just in manifest)
-            file_size = existing_files.get(expected_filename, 0)
-            file_exists_on_disk = expected_filename in existing_files and file_size > 0
+            if manifest_entry:
+                # Track is in manifest - check if the manifest's filename exists on disk
+                manifest_filename = manifest_entry.get("filename", "").lower().replace(".mp3", "")
+                file_size = existing_files.get(manifest_filename, 0)
 
-            if file_exists_on_disk:
-                # File exists - check if it's potentially corrupt (too small)
-                if file_size < self.MIN_VALID_FILE_SIZE:
-                    track["_suspect_reason"] = f"File too small ({file_size // 1024}KB)"
-                    suspect_tracks.append(track)
+                if file_size > 0:
+                    # File exists - check if it's potentially corrupt (too small)
+                    if file_size < self.MIN_VALID_FILE_SIZE:
+                        track["_suspect_reason"] = f"File too small ({file_size // 1024}KB)"
+                        suspect_tracks.append(track)
+                    else:
+                        existing_tracks.append(track)
                 else:
-                    existing_tracks.append(track)
-            elif key in local_by_key:
-                # In manifest but file missing - needs re-download
-                track["_suspect_reason"] = "File missing from disk"
-                suspect_tracks.append(track)
+                    # In manifest but file missing - needs re-download
+                    track["_suspect_reason"] = "File missing from disk"
+                    suspect_tracks.append(track)
             else:
-                new_tracks.append(track)
+                # Not in manifest - check if file exists by expected filename
+                expected_filename = self._generate_filename(track).lower().replace(".mp3", "")
+                file_size = existing_files.get(expected_filename, 0)
+
+                if file_size > 0:
+                    # File exists but not in manifest - treat as existing
+                    if file_size < self.MIN_VALID_FILE_SIZE:
+                        track["_suspect_reason"] = f"File too small ({file_size // 1024}KB)"
+                        suspect_tracks.append(track)
+                    else:
+                        existing_tracks.append(track)
+                else:
+                    new_tracks.append(track)
 
         # Find removed tracks (in local state but not in playlist)
         removed_tracks = []

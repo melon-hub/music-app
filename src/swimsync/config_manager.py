@@ -25,6 +25,7 @@ class ConfigManager:
         "last_playlist_url": "",
         "window_geometry": "800x650",
         "device_name": "Shokz OpenSwim Pro",
+        "last_device_path": "",
     }
     
     def __init__(self, config_dir: str = None):
