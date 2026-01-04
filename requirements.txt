@@ -3,6 +3,9 @@
 # Core dependency - Spotify downloader using YouTube matching
 spotdl>=4.4.0
 
+# Web UI dependencies
+flask>=3.0.0
+
 # Note: FFmpeg is also required but must be installed separately
 # Windows: choco install ffmpeg
 # Or download from: https://ffmpeg.org/download.html

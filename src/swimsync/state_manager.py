@@ -1,24 +1,64 @@
 """
 State Manager - Tracks downloaded files and sync state
+Supports both v1 (single manifest) and v2 (per-playlist manifests) formats.
 """
 
 import json
 import logging
 import os
 import threading
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 
 
+def _normalize_text(text: str) -> str:
+    """Normalize text by replacing unicode whitespace with regular spaces."""
+    # Replace non-breaking spaces and other unicode whitespace with regular space
+    text = text.replace('\xa0', ' ')  # Non-breaking space
+    text = text.replace('\u200b', '')  # Zero-width space
+    text = text.replace('\u2009', ' ')  # Thin space
+    text = text.replace('\u202f', ' ')  # Narrow no-break space
+    # Normalize unicode to NFC form for consistent comparison
+    text = unicodedata.normalize('NFC', text)
+    return text
+
+
 class StateManager:
-    """Manages the local manifest of downloaded tracks"""
+    """
+    Manages the local manifest of downloaded tracks.
+
+    Supports two modes:
+    - V1 mode: Single manifest in output folder (backward compatible)
+    - V2 mode: Per-playlist manifest in playlists/{playlist_id}/ folder
+    """
 
     MANIFEST_FILENAME = ".swimsync_manifest.json"
 
-    def __init__(self, output_folder: str):
+    def __init__(self, output_folder: str, playlist_id: str = None):
+        """
+        Initialize the state manager.
+
+        Args:
+            output_folder: Root folder for the library
+            playlist_id: If provided, uses v2 mode with per-playlist manifest
+        """
         self.output_folder = Path(output_folder)
-        self.manifest_path = self.output_folder / self.MANIFEST_FILENAME
+        self.playlist_id = playlist_id
+        self._is_v2 = playlist_id is not None
+
+        if self._is_v2:
+            # V2 mode: manifest in playlists/{playlist_id}/
+            self.manifest_path = (
+                self.output_folder / "playlists" / playlist_id / self.MANIFEST_FILENAME
+            )
+            self.tracks_folder = self.output_folder / "playlists" / playlist_id
+        else:
+            # V1 mode: manifest in output folder
+            self.manifest_path = self.output_folder / self.MANIFEST_FILENAME
+            self.tracks_folder = self.output_folder
+
         self._lock = threading.Lock()
         self._data = self._load()
     
@@ -28,31 +68,46 @@ class StateManager:
             try:
                 with open(self.manifest_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                # Corrupted manifest, rebuild from folder scan
+            except json.JSONDecodeError as e:
+                # Corrupted JSON, rebuild from folder scan
+                logging.warning(f"Corrupted manifest at {self.manifest_path}: {e}. Rebuilding from folder scan.")
+                return self._rebuild_from_folder()
+            except IOError as e:
+                # IO error reading manifest, rebuild from folder scan
+                logging.warning(f"Cannot read manifest at {self.manifest_path}: {e}. Rebuilding from folder scan.")
                 return self._rebuild_from_folder()
         
         return self._default_manifest()
     
     def _default_manifest(self) -> Dict:
         """Create empty manifest structure"""
-        return {
-            "version": "1.0",
-            "playlist_url": "",
-            "playlist_name": "",
-            "last_sync": None,
-            "output_folder": str(self.output_folder),
-            "tracks": []
-        }
+        if self._is_v2:
+            return {
+                "version": "2.0",
+                "playlist_id": self.playlist_id,
+                "playlist_url": "",
+                "playlist_name": "",
+                "last_sync": None,
+                "tracks": []
+            }
+        else:
+            return {
+                "version": "1.0",
+                "playlist_url": "",
+                "playlist_name": "",
+                "last_sync": None,
+                "output_folder": str(self.output_folder),
+                "tracks": []
+            }
     
     def _rebuild_from_folder(self) -> Dict:
         """Rebuild manifest by scanning existing MP3 files"""
         manifest = self._default_manifest()
-        
-        if not self.output_folder.exists():
+
+        if not self.tracks_folder.exists():
             return manifest
-        
-        for mp3_file in self.output_folder.glob("*.mp3"):
+
+        for mp3_file in self.tracks_folder.glob("*.mp3"):
             # Parse filename: "Artist - Title.mp3"
             stem = mp3_file.stem
             if " - " in stem:
@@ -79,36 +134,91 @@ class StateManager:
         
         return manifest
     
-    def save(self):
-        """Save manifest to disk"""
+    def save(self) -> bool:
+        """Save manifest to disk. Returns True on success, False on failure."""
         with self._lock:
             try:
                 self.output_folder.mkdir(parents=True, exist_ok=True)
 
                 with open(self.manifest_path, 'w', encoding='utf-8') as f:
                     json.dump(self._data, f, indent=2, ensure_ascii=False)
+                return True
             except (IOError, OSError, PermissionError) as e:
                 logging.warning(f"Failed to save manifest: {e}")
+                return False
     
     def get_all_tracks(self) -> List[Dict]:
         """Get list of all tracked tracks"""
         return self._data.get("tracks", [])
     
-    def get_track(self, title: str, artist: str) -> Optional[Dict]:
-        """Find a specific track by title and artist"""
-        key = f"{artist.lower().strip()}::{title.lower().strip()}"
-        
+    def _make_track_key(self, track: Dict) -> str:
+        """Generate a track key for comparison.
+
+        Uses spotify_id as primary key when available.
+        Falls back to first_artist::title for matching.
+        """
+        spotify_id = track.get("spotify_id", "").strip()
+        if spotify_id:
+            return f"spotify::{spotify_id}"
+
+        title = _normalize_text(track.get("title", "")).lower().strip()
+        artist = _normalize_text(track.get("artist", "")).lower().strip()
+        # Use only first artist for matching
+        first_artist = artist.split(',')[0].strip()
+        return f"{first_artist}::{title}"
+
+    def get_track(self, title: str, artist: str, spotify_id: str = "") -> Optional[Dict]:
+        """Find a specific track by spotify_id or title/artist."""
+        # Build search key
+        search_key = None
+        if spotify_id:
+            search_key = f"spotify::{spotify_id}"
+        else:
+            norm_title = _normalize_text(title).lower().strip()
+            norm_artist = _normalize_text(artist).lower().strip()
+            first_artist = norm_artist.split(',')[0].strip()
+            search_key = f"{first_artist}::{norm_title}"
+
         for track in self._data.get("tracks", []):
-            track_key = f"{track.get('artist', '').lower().strip()}::{track.get('title', '').lower().strip()}"
-            if track_key == key:
+            track_key = self._make_track_key(track)
+            if track_key == search_key:
                 return track
-        
+
+        # Also try matching without spotify_id if we searched by ID but didn't find
+        if spotify_id:
+            norm_title = _normalize_text(title).lower().strip()
+            norm_artist = _normalize_text(artist).lower().strip()
+            first_artist = norm_artist.split(',')[0].strip()
+            fallback_key = f"{first_artist}::{norm_title}"
+            for track in self._data.get("tracks", []):
+                track_key = self._make_track_key(track)
+                if track_key == fallback_key:
+                    return track
+
         return None
     
-    def add_track(self, track_info: Dict, filename: str, file_size_bytes: int = 0):
-        """Add a track to the manifest"""
-        # Check if already exists
-        existing = self.get_track(track_info.get("title", ""), track_info.get("artist", ""))
+    def add_track(
+        self,
+        track_info: Dict,
+        filename: str,
+        file_size_bytes: int = 0,
+        storage_hash: str = None
+    ):
+        """
+        Add a track to the manifest.
+
+        Args:
+            track_info: Track metadata dict
+            filename: Display filename for the track
+            file_size_bytes: File size in bytes (optional, will be calculated if 0)
+            storage_hash: Content hash for deduplicated storage (v2 only)
+        """
+        # Check if already exists (using spotify_id if available)
+        existing = self.get_track(
+            track_info.get("title", ""),
+            track_info.get("artist", ""),
+            track_info.get("spotify_id", "")
+        )
         file_size_mb = file_size_bytes / 1024 / 1024 if file_size_bytes else self._get_file_size(filename)
         if existing:
             # Update existing entry
@@ -116,6 +226,8 @@ class StateManager:
             existing["file_size_mb"] = file_size_mb
             existing["downloaded_at"] = datetime.now().isoformat()
             existing["status"] = "downloaded"
+            if storage_hash:
+                existing["storage_hash"] = storage_hash
         else:
             # Add new entry
             track = {
@@ -128,15 +240,17 @@ class StateManager:
                 "downloaded_at": datetime.now().isoformat(),
                 "status": "downloaded"
             }
+            if storage_hash:
+                track["storage_hash"] = storage_hash
             self._data["tracks"].append(track)
     
     def remove_track(self, track_info: Dict):
-        """Remove a track from the manifest"""
-        key = f"{track_info.get('artist', '').lower().strip()}::{track_info.get('title', '').lower().strip()}"
-        
+        """Remove a track from the manifest using spotify_id or artist/title."""
+        remove_key = self._make_track_key(track_info)
+
         self._data["tracks"] = [
             t for t in self._data["tracks"]
-            if f"{t.get('artist', '').lower().strip()}::{t.get('title', '').lower().strip()}" != key
+            if self._make_track_key(t) != remove_key
         ]
     
     def update_playlist_info(self, url: str, name: str):
@@ -163,25 +277,42 @@ class StateManager:
     def get_track_count(self) -> int:
         """Get number of tracked tracks"""
         return len(self._data.get("tracks", []))
+
+    def get_avg_track_size_mb(self) -> float:
+        """Calculate average file size per track in MB"""
+        tracks = self._data.get("tracks", [])
+        if not tracks:
+            return 0.0
+        total_size = sum(track.get("file_size_mb", 0) for track in tracks)
+        return total_size / len(tracks)
+
+    def get_last_sync_time(self) -> Optional[str]:
+        """Get the timestamp of the last successful sync"""
+        return self._data.get("last_sync")
+
+    def set_last_sync_time(self):
+        """Update the last sync timestamp to now"""
+        self._data["last_sync"] = datetime.now().isoformat()
+        self.save()
     
     def _get_file_size(self, filename: str) -> float:
         """Get file size in MB"""
-        filepath = self.output_folder / filename
+        filepath = self.tracks_folder / filename
         if filepath.exists():
             return filepath.stat().st_size / (1024 * 1024)
         return 0.0
-    
+
     def sync_with_folder(self):
         """
         Sync manifest with actual folder contents.
         Removes entries for files that no longer exist.
         Adds entries for files not in manifest.
         """
-        if not self.output_folder.exists():
+        if not self.tracks_folder.exists():
             return
-        
+
         # Get actual files
-        actual_files = {f.name.lower(): f for f in self.output_folder.glob("*.mp3")}
+        actual_files = {f.name.lower(): f for f in self.tracks_folder.glob("*.mp3")}
         
         # Remove manifest entries for missing files
         self._data["tracks"] = [
@@ -223,3 +354,18 @@ class StateManager:
         """Clear all tracked data"""
         self._data = self._default_manifest()
         self.save()
+
+    def is_v2(self) -> bool:
+        """Check if this is a v2 manifest."""
+        return self._is_v2
+
+    def get_track_by_hash(self, storage_hash: str) -> Optional[Dict]:
+        """Find a track by its storage hash (v2 only)."""
+        for track in self._data.get("tracks", []):
+            if track.get("storage_hash") == storage_hash:
+                return track
+        return None
+
+    def get_version(self) -> str:
+        """Get the manifest version."""
+        return self._data.get("version", "1.0")
