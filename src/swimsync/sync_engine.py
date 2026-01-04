@@ -11,14 +11,48 @@ from typing import Callable, Optional, Tuple, List, Dict
 import threading
 
 
+def find_spotdl() -> str:
+    """Find spotdl executable, checking common Python Scripts locations"""
+    import shutil
+
+    # First check if it's in PATH
+    spotdl = shutil.which("spotdl")
+    if spotdl:
+        return spotdl
+
+    # Check common Windows Python Scripts locations
+    home = os.path.expanduser("~")
+    possible_paths = [
+        # User install locations
+        os.path.join(home, "AppData", "Roaming", "Python", "Python313", "Scripts", "spotdl.exe"),
+        os.path.join(home, "AppData", "Roaming", "Python", "Python312", "Scripts", "spotdl.exe"),
+        os.path.join(home, "AppData", "Roaming", "Python", "Python311", "Scripts", "spotdl.exe"),
+        os.path.join(home, "AppData", "Local", "Programs", "Python", "Python313", "Scripts", "spotdl.exe"),
+        os.path.join(home, "AppData", "Local", "Programs", "Python", "Python312", "Scripts", "spotdl.exe"),
+        os.path.join(home, "AppData", "Local", "Programs", "Python", "Python311", "Scripts", "spotdl.exe"),
+        # System-wide install
+        r"C:\Python313\Scripts\spotdl.exe",
+        r"C:\Python312\Scripts\spotdl.exe",
+        r"C:\Python311\Scripts\spotdl.exe",
+    ]
+
+    for path in possible_paths:
+        if os.path.isfile(path):
+            return path
+
+    # Fallback to just "spotdl" and let it fail with a clear message
+    return "spotdl"
+
+
 class SyncEngine:
     """Manages playlist sync operations using spotDL"""
-    
+
     def __init__(self, config, state_manager):
         self.config = config
         self.state = state_manager
         self._cancelled = False
         self._current_process: Optional[subprocess.Popen] = None
+        self._spotdl_path = find_spotdl()
     
     def fetch_playlist(self, url: str) -> Tuple[str, List[Dict]]:
         """
@@ -27,7 +61,7 @@ class SyncEngine:
         """
         # Use spotDL to get track list as JSON
         cmd = [
-            "spotdl", "save", url,
+            self._spotdl_path, "save", url,
             "--save-file", "-",  # Output to stdout
         ]
         
@@ -73,7 +107,7 @@ class SyncEngine:
         """
         Fallback method using spotdl url command to list tracks
         """
-        cmd = ["spotdl", "url", url]
+        cmd = [self._spotdl_path, "url", url]
         
         try:
             result = subprocess.run(
@@ -252,7 +286,7 @@ class SyncEngine:
         output_template = str(output_folder / "{artist} - {title}")
         
         cmd = [
-            "spotdl",
+            self._spotdl_path,
             "--output", output_template,
             "--format", "mp3",
             "--bitrate", self.config.get("bitrate"),
@@ -357,11 +391,12 @@ class SyncEngine:
             "spotdl": False,
             "ffmpeg": False
         }
-        
-        # Check spotDL
+
+        # Check spotDL (using smart path finder)
+        spotdl_path = find_spotdl()
         try:
             result = subprocess.run(
-                ["spotdl", "--version"],
+                [spotdl_path, "--version"],
                 capture_output=True,
                 text=True,
                 timeout=10
