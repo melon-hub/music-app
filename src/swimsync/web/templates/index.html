@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swim Sync</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2 12C2 12 5 8 12 8C19 8 22 12 22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M2 16C2 16 5 12 12 12C19 12 22 16 22 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M2 20C2 20 5 16 12 16C19 16 22 20 22 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span class="logo-text">Swim Sync</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="dashboard">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7" rx="1"/>
+                        <rect x="14" y="3" width="7" height="7" rx="1"/>
+                        <rect x="3" y="14" width="7" height="7" rx="1"/>
+                        <rect x="14" y="14" width="7" height="7" rx="1"/>
+                    </svg>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-view="settings">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    <span>Settings</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                        </svg>
+                    </div>
+                    <span class="user-name">Local User</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard View -->
+            <div id="dashboard-view" class="view active">
+                <!-- URL Input Section -->
+                <section class="input-section">
+                    <div class="input-group">
+                        <input type="text" id="playlist-url" class="url-input" placeholder="Paste Spotify Playlist URL here...">
+                        <button id="load-btn" class="btn btn-primary">Load Playlist</button>
+                    </div>
+                    <div class="folder-group">
+                        <label>Output Folder:</label>
+                        <input type="text" id="output-folder" class="folder-input" readonly>
+                        <button id="browse-btn" class="btn btn-secondary">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            Browse
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Playlist Panel -->
+                <section class="playlist-section">
+                    <div class="playlist-header">
+                        <h2 class="playlist-title">Playlist Panel</h2>
+                        <span id="playlist-name" class="playlist-name">No playlist loaded</span>
+                        <span id="track-count" class="track-count"></span>
+                    </div>
+                    
+                    <!-- Empty State -->
+                    <div id="empty-state" class="empty-state">
+                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M9 18V5l12-2v13"/>
+                            <circle cx="6" cy="18" r="3"/>
+                            <circle cx="18" cy="16" r="3"/>
+                        </svg>
+                        <p>Paste a Spotify playlist URL above to get started</p>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div id="loading-state" class="loading-state hidden">
+                        <div class="spinner"></div>
+                        <p>Loading playlist...</p>
+                    </div>
+
+                    <!-- Track List -->
+                    <div id="track-list-container" class="track-list-container hidden">
+                        <table class="track-table">
+                            <thead>
+                                <tr>
+                                    <th>Track Name</th>
+                                    <th>Artist</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="track-list">
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Storage & Actions -->
+                <section class="actions-section">
+                    <div class="storage-info">
+                        <div class="storage-bar-container">
+                            <div class="storage-label">
+                                <span id="storage-used">0 GB</span> / <span id="storage-limit">32 GB</span>
+                            </div>
+                            <div class="storage-bar">
+                                <div id="storage-fill" class="storage-fill" style="width: 0%"></div>
+                            </div>
+                            <span id="storage-percent" class="storage-percent">0%</span>
+                        </div>
+                        <div id="sync-summary" class="sync-summary">
+                            Load a playlist to see sync preview
+                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button id="sync-btn" class="btn btn-primary btn-large" disabled>Sync Now</button>
+                        <button id="cancel-btn" class="btn btn-secondary" disabled>Cancel</button>
+                        <label class="toggle-label">
+                            <input type="checkbox" id="delete-removed-toggle">
+                            <span class="toggle-switch"></span>
+                            <span>Delete removed tracks</span>
+                        </label>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Settings View -->
+            <div id="settings-view" class="view hidden">
+                <h1 class="view-title">Settings</h1>
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="setting-bitrate">Audio Bitrate</label>
+                        <select id="setting-bitrate" class="setting-select">
+                            <option value="128k">128 kbps</option>
+                            <option value="192k">192 kbps</option>
+                            <option value="256k">256 kbps</option>
+                            <option value="320k">320 kbps</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="setting-storage-limit">Storage Limit (GB)</label>
+                        <input type="number" id="setting-storage-limit" class="setting-input" min="1" max="1000" value="32">
+                    </div>
+                    <div class="setting-item">
+                        <label for="setting-timeout">Download Timeout (seconds)</label>
+                        <input type="number" id="setting-timeout" class="setting-input" min="30" max="600" value="120">
+                    </div>
+                    <button id="save-settings-btn" class="btn btn-primary">Save Settings</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Sync Progress Panel -->
+        <aside id="sync-panel" class="sync-panel hidden">
+            <div class="sync-panel-header">
+                <h3>Syncing...</h3>
+                <span id="sync-percent">0%</span>
+            </div>
+            <div class="sync-progress-ring">
+                <svg viewBox="0 0 100 100">
+                    <circle class="progress-bg" cx="50" cy="50" r="45"/>
+                    <circle id="progress-circle" class="progress-fill" cx="50" cy="50" r="45"/>
+                </svg>
+                <span id="sync-percent-inner" class="progress-text">0%</span>
+            </div>
+            <div class="sync-details">
+                <p class="sync-track-label">Artist - Song Name</p>
+                <p id="sync-current-track" class="sync-track-name">Waiting...</p>
+                <div class="sync-stats">
+                    <span>Download Speed: <strong id="sync-speed">0 MB/s</strong></span>
+                    <span>Estimated Time: <strong id="sync-eta">Calculating...</strong></span>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

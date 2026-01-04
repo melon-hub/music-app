@@ -12,6 +12,7 @@ A lightweight Windows app to sync Spotify playlists to your Shokz OpenSwim Pro (
 - 🗑️ Optional auto-cleanup of removed tracks
 - 💾 State tracking to avoid re-downloading
 - ⚡ Simple one-click sync
+- 🌐 **NEW: Web UI** - Modern browser-based interface
 
 ## Requirements
 
@@ -66,35 +67,68 @@ spotdl --version
 pip install -r requirements.txt
 ```
 
-3. Run the app:
+3. Run the app (choose one):
+
+**Desktop GUI (Tkinter):**
 ```cmd
 python run.py
 ```
 
-Or use the batch launcher:
+**Web UI (Browser-based):**
 ```cmd
-scripts\SwimSync.bat
+python run_web.py
 ```
+
+Or use the batch launchers:
+```cmd
+scripts\SwimSync.bat      # Desktop GUI
+scripts\SwimSyncWeb.bat   # Web UI
+```
+
+## User Interfaces
+
+### Desktop GUI (Tkinter)
+The original desktop application with a native Windows look and feel.
+
+### Web UI (NEW)
+A modern browser-based interface that runs on a local server.
+
+**Features:**
+- Clean, modern design with teal/navy color scheme
+- Responsive layout that works on any screen size
+- Real-time sync progress with circular progress indicator
+- Settings page for configuration
+- Keyboard shortcuts (Ctrl+S to sync, Escape to cancel)
+
+**How to use:**
+1. Run `python run_web.py` or `scripts\SwimSyncWeb.bat`
+2. Your browser will automatically open to `http://localhost:5000`
+3. Paste a Spotify playlist URL and click "Load Playlist"
+4. Review the track list and click "Sync Now"
 
 ## Project Structure
 
 ```
 swimsync/
-├── src/swimsync/        # Main application package
-│   ├── app.py           # Tkinter GUI
-│   ├── sync_engine.py   # spotDL integration
-│   ├── state_manager.py # Track manifest
-│   └── config_manager.py# Settings
-├── scripts/             # Launcher scripts
-├── docs/                # Documentation (PRD)
-├── tests/               # Test suite
-├── run.py               # Quick launcher
-├── pyproject.toml       # Python package config
-└── requirements.txt     # Dependencies
+├── src/swimsync/           # Main application package
+│   ├── app.py              # Tkinter GUI
+│   ├── web_app.py          # Flask Web UI server
+│   ├── web/                # Web UI assets
+│   │   ├── templates/      # HTML templates
+│   │   └── static/         # CSS & JavaScript
+│   ├── sync_engine.py      # spotDL integration
+│   ├── state_manager.py    # Track manifest
+│   └── config_manager.py   # Settings
+├── scripts/                # Launcher scripts
+├── docs/                   # Documentation (PRD)
+├── tests/                  # Test suite
+├── run.py                  # Desktop GUI launcher
+├── run_web.py              # Web UI launcher
+├── pyproject.toml          # Python package config
+└── requirements.txt        # Dependencies
 ```
 
 ## Usage
-
 ### First Time Setup
 
 1. **Paste your Spotify playlist URL**  
@@ -114,6 +148,7 @@ swimsync/
    - 🟢 **New** - Will be downloaded
    - ⚪ **Exists** - Already on disk
    - 🔴 **Removed** - No longer in playlist
+   - 🟠 **Suspect** - Possibly corrupt, will re-download
 
 2. Check the **storage gauge** to ensure you won't exceed device capacity
 
@@ -132,7 +167,7 @@ swimsync/
 
 ## Settings
 
-Access via the **Settings** button:
+Access via the **Settings** button (Desktop) or Settings page (Web UI):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -165,6 +200,11 @@ Access via the **Settings** button:
 - Delete the wrong file and manually download the correct one
 - Report consistent issues to the [spotDL GitHub](https://github.com/spotDL/spotify-downloader)
 
+### Web UI not loading
+- Ensure port 5000 is not in use by another application
+- Try accessing `http://127.0.0.1:5000` directly
+- Check the terminal for error messages
+
 ## How It Works
 
 ```
@@ -194,6 +234,7 @@ Your Spotify account is never at risk because:
 
 ## File Structure
 
+
 ```
 ~/Music/SwimSync/
 ├── Artist - Song 1.mp3
@@ -221,3 +262,4 @@ MIT License - Free for personal use.
 
 - [spotDL](https://github.com/spotDL/spotify-downloader) - The engine behind the downloads
 - [Tkinter](https://docs.python.org/3/library/tkinter.html) - Python's built-in GUI framework
+- [Flask](https://flask.palletsprojects.com/) - Web UI framework
