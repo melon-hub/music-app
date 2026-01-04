@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Callable, Optional, Tuple, List, Dict
 import threading
+import urllib.request
+import urllib.error
 
 
 def find_spotdl() -> str:
@@ -56,33 +58,112 @@ class SyncEngine:
     
     def fetch_playlist(self, url: str) -> Tuple[str, List[Dict]]:
         """
-        Fetch playlist metadata from Spotify via spotDL.
+        Fetch playlist metadata - tries web scraping first (faster, no rate limits),
+        falls back to spotDL if scraping fails.
         Returns (playlist_name, list of track dicts)
         """
-        # Use spotDL to get track list as JSON
+        # Try web scraping first (no API rate limits)
+        try:
+            return self._fetch_playlist_scrape(url)
+        except Exception as scrape_error:
+            print(f"Scraping failed: {scrape_error}, trying spotDL...")
+
+        # Fall back to spotDL
+        return self._fetch_playlist_spotdl(url)
+
+    def _fetch_playlist_scrape(self, url: str) -> Tuple[str, List[Dict]]:
+        """
+        Fetch playlist by scraping Spotify's web page directly.
+        Bypasses API rate limits entirely.
+        """
+        # Extract playlist ID from URL
+        match = re.search(r'playlist/([a-zA-Z0-9]+)', url)
+        if not match:
+            raise Exception("Invalid playlist URL")
+
+        playlist_id = match.group(1)
+        embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+
+        # Fetch the embed page (lighter than full page)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+
+        req = urllib.request.Request(embed_url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                html = response.read().decode('utf-8')
+        except urllib.error.URLError as e:
+            raise Exception(f"Failed to fetch playlist page: {e}")
+
+        # Extract JSON data from the page
+        # Spotify embeds data in a <script id="__NEXT_DATA__"> tag
+        json_match = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>([^<]+)</script>', html)
+
+        if not json_match:
+            # Try alternative: look for resource data in script
+            json_match = re.search(r'"entity"\s*:\s*(\{[^}]+?"tracks"[^}]+\})', html)
+            if not json_match:
+                raise Exception("Could not parse playlist data from page")
+
+        try:
+            data = json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            raise Exception("Failed to parse playlist JSON")
+
+        # Navigate the JSON structure to find tracks
+        tracks = []
+        playlist_name = "Spotify Playlist"
+
+        # Try different JSON structures Spotify might use
+        if "props" in data:
+            # __NEXT_DATA__ structure
+            page_props = data.get("props", {}).get("pageProps", {})
+            state = page_props.get("state", {}).get("data", {}).get("entity", {})
+            playlist_name = state.get("name", playlist_name)
+            track_list = state.get("trackList", [])
+
+            for item in track_list:
+                track = item if isinstance(item, dict) else {}
+                tracks.append({
+                    "spotify_id": track.get("uri", "").split(":")[-1] if track.get("uri") else "",
+                    "title": track.get("title", "Unknown"),
+                    "artist": track.get("subtitle", "Unknown"),
+                    "album": "",
+                    "url": f"https://open.spotify.com/track/{track.get('uri', '').split(':')[-1]}" if track.get('uri') else "",
+                    "duration": track.get("duration", 0),
+                })
+
+        if not tracks:
+            raise Exception("No tracks found in playlist")
+
+        return playlist_name, tracks
+
+    def _fetch_playlist_spotdl(self, url: str) -> Tuple[str, List[Dict]]:
+        """
+        Fetch playlist metadata via spotDL (fallback method).
+        """
         cmd = [
             self._spotdl_path, "save", url,
-            "--save-file", "-",  # Output to stdout
+            "--save-file", "-",
         ]
-        
+
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=180  # 3 min to allow for Spotify rate limit retries
+                timeout=180
             )
-            
+
             if result.returncode != 0:
-                # Try alternative method - just list tracks
                 return self._fetch_playlist_fallback(url)
-            
-            # Parse the JSON output
+
             data = json.loads(result.stdout)
-            
+
             playlist_name = data.get("name", "Unknown Playlist")
             tracks = []
-            
+
             for track in data.get("songs", []):
                 tracks.append({
                     "spotify_id": track.get("song_id", ""),
@@ -92,13 +173,12 @@ class SyncEngine:
                     "url": track.get("url", ""),
                     "duration": track.get("duration", 0),
                 })
-            
+
             return playlist_name, tracks
-            
+
         except subprocess.TimeoutExpired:
             raise Exception("Timeout fetching playlist. Check your connection.")
         except json.JSONDecodeError:
-            # Fallback to simpler parsing
             return self._fetch_playlist_fallback(url)
         except FileNotFoundError:
             raise Exception("spotDL not found. Please install it with: pip install spotdl")
