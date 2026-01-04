@@ -1,4 +1,4 @@
-# 🏊 Swim Sync
+# 🏊 Sync or Swim
 
 A lightweight Windows app to sync Spotify playlists to your Shokz OpenSwim Pro (or any MP3 player with limited storage).
 
@@ -16,7 +16,7 @@ A lightweight Windows app to sync Spotify playlists to your Shokz OpenSwim Pro (
 
 ## Requirements
 
-Before running Swim Sync, you need:
+Before running Sync or Swim, you need:
 
 ### 1. Python 3.11+
 
@@ -209,7 +209,7 @@ Access via the **Settings** button (Desktop) or Settings page (Web UI):
 
 ```
 ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│     Spotify     │──────▶│    Swim Sync    │──────▶│  OpenSwim Pro   │
+│     Spotify     │──────▶│    Sync or Swim    │──────▶│  OpenSwim Pro   │
 │  Public API     │ meta  │   (this app)    │ MP3s  │    (32GB)       │
 │                 │ data  │                 │       │                 │
 └─────────────────┘       └────────┬────────┘       └─────────────────┘
@@ -221,7 +221,7 @@ Access via the **Settings** button (Desktop) or Settings page (Web UI):
                           └─────────────────┘
 ```
 
-1. **Metadata Fetch**: Swim Sync uses spotDL to read track info from Spotify's public API (no login needed)
+1. **Metadata Fetch**: Sync or Swim uses spotDL to read track info from Spotify's public API (no login needed)
 2. **State Compare**: Local manifest tracks what's already downloaded
 3. **Delta Preview**: Shows you exactly what will change
 4. **Download**: spotDL finds matching audio on YouTube and converts to MP3
