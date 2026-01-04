@@ -1,9 +1,34 @@
-# Dependencies
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
 
 # Build output
 dist/
 build/
+
+# PyInstaller
+*.exe
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
 # Environment files
 .env
@@ -22,7 +47,6 @@ Thumbs.db
 
 # Logs
 *.log
-npm-debug.log*
 
 # Private instructions
 CLAUDE.md

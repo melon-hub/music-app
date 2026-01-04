@@ -1,0 +1,11 @@
+# Swim Sync Dependencies
+# ----------------------
+# Core dependency - Spotify downloader using YouTube matching
+spotdl>=4.4.0
+
+# Note: FFmpeg is also required but must be installed separately
+# Windows: choco install ffmpeg
+# Or download from: https://ffmpeg.org/download.html
+
+# For building standalone .exe (optional)
+# pyinstaller>=6.0.0
