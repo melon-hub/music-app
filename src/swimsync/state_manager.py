@@ -98,13 +98,15 @@ class StateManager:
         
         return None
     
-    def add_track(self, track_info: Dict, filename: str):
+    def add_track(self, track_info: Dict, filename: str, file_size_bytes: int = 0):
         """Add a track to the manifest"""
         # Check if already exists
         existing = self.get_track(track_info.get("title", ""), track_info.get("artist", ""))
+        file_size_mb = file_size_bytes / 1024 / 1024 if file_size_bytes else self._get_file_size(filename)
         if existing:
             # Update existing entry
             existing["filename"] = filename
+            existing["file_size_mb"] = file_size_mb
             existing["downloaded_at"] = datetime.now().isoformat()
             existing["status"] = "downloaded"
         else:
@@ -115,7 +117,7 @@ class StateManager:
                 "artist": track_info.get("artist", "Unknown"),
                 "album": track_info.get("album", ""),
                 "filename": filename,
-                "file_size_mb": self._get_file_size(filename),
+                "file_size_mb": file_size_mb,
                 "downloaded_at": datetime.now().isoformat(),
                 "status": "downloaded"
             }

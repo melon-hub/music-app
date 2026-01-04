@@ -289,65 +289,100 @@ class SyncEngine:
         self,
         tracks_to_download: List[Dict],
         tracks_to_delete: List[Dict],
-        progress_callback: Optional[Callable[[int, int, str, str], None]] = None
+        progress_callback: Optional[Callable[[int, int, str, str, dict], None]] = None
     ) -> Dict:
         """
         Perform sync operation.
         Downloads new tracks and deletes removed ones.
+        Progress callback receives: (current, total, track_name, status, extra_info)
+        extra_info dict contains: file_size_mb, speed_mbps, elapsed_seconds
         Returns summary dict.
         """
+        import time
+
         self._cancelled = False
         total = len(tracks_to_download) + len(tracks_to_delete)
         current = 0
-        
+
         downloaded = 0
         failed = 0
         deleted = 0
-        
+        total_bytes = 0
+        sync_start_time = time.time()
+
         output_folder = Path(self.config.get("output_folder"))
         output_folder.mkdir(parents=True, exist_ok=True)
-        
+
         # Download new tracks
         for track in tracks_to_download:
             if self._cancelled:
                 break
-            
+
             current += 1
             track_name = f"{track['title']} - {track['artist']}"
-            
+
             if progress_callback:
-                progress_callback(current, total, track_name, "Downloading")
-            
-            success = self._download_track(track, output_folder)
-            
+                elapsed = time.time() - sync_start_time
+                speed = (total_bytes / 1024 / 1024) / elapsed if elapsed > 0 else 0
+                progress_callback(current, total, track_name, "Downloading", {
+                    "file_size_mb": 0,
+                    "speed_mbps": speed,
+                    "elapsed_seconds": elapsed,
+                    "total_bytes": total_bytes
+                })
+
+            track_start = time.time()
+            success, file_size = self._download_track(track, output_folder)
+            track_elapsed = time.time() - track_start
+
             if success:
                 downloaded += 1
-                self.state.add_track(track, self._generate_filename(track))
+                total_bytes += file_size
+                self.state.add_track(track, self._generate_filename(track), file_size)
                 if progress_callback:
-                    progress_callback(current, total, track_name, "Downloaded")
+                    elapsed = time.time() - sync_start_time
+                    speed = (total_bytes / 1024 / 1024) / elapsed if elapsed > 0 else 0
+                    progress_callback(current, total, track_name, "Downloaded", {
+                        "file_size_mb": file_size / 1024 / 1024,
+                        "speed_mbps": speed,
+                        "elapsed_seconds": elapsed,
+                        "track_time": track_elapsed,
+                        "total_bytes": total_bytes
+                    })
             else:
                 failed += 1
                 if progress_callback:
-                    progress_callback(current, total, track_name, "Failed")
+                    elapsed = time.time() - sync_start_time
+                    progress_callback(current, total, track_name, "Failed", {
+                        "file_size_mb": 0,
+                        "speed_mbps": 0,
+                        "elapsed_seconds": elapsed
+                    })
         
         # Delete removed tracks
         for track in tracks_to_delete:
             if self._cancelled:
                 break
-            
+
             current += 1
             track_name = f"{track['title']} - {track['artist']}"
-            
+
             if progress_callback:
-                progress_callback(current, total, track_name, "Deleting")
-            
+                elapsed = time.time() - sync_start_time
+                progress_callback(current, total, track_name, "Deleting", {
+                    "elapsed_seconds": elapsed
+                })
+
             success = self._delete_track(track, output_folder)
-            
+
             if success:
                 deleted += 1
                 self.state.remove_track(track)
                 if progress_callback:
-                    progress_callback(current, total, track_name, "Deleted")
+                    elapsed = time.time() - sync_start_time
+                    progress_callback(current, total, track_name, "Deleted", {
+                        "elapsed_seconds": elapsed
+                    })
         
         # Save state
         self.state.save()
@@ -359,17 +394,17 @@ class SyncEngine:
             "cancelled": self._cancelled
         }
     
-    def _download_track(self, track: Dict, output_folder: Path) -> bool:
-        """Download a single track using spotDL"""
+    def _download_track(self, track: Dict, output_folder: Path) -> Tuple[bool, int]:
+        """Download a single track using spotDL. Returns (success, file_size_bytes)"""
         # Build search query - use URL if available, otherwise search by name
         if track.get("url"):
             query = track["url"]
         else:
             query = f"{track['artist']} - {track['title']}"
-        
+
         # Output format template
         output_template = str(output_folder / "{artist} - {title}")
-        
+
         cmd = [
             self._spotdl_path,
             "--output", output_template,
@@ -377,7 +412,7 @@ class SyncEngine:
             "--bitrate", self.config.get("bitrate"),
             query
         ]
-        
+
         try:
             self._current_process = subprocess.Popen(
                 cmd,
@@ -385,39 +420,39 @@ class SyncEngine:
                 stderr=subprocess.PIPE,
                 text=True
             )
-            
+
             timeout = self.config.get("download_timeout")
             stdout, stderr = self._current_process.communicate(timeout=timeout)
-            
+
             self._current_process = None
-            
-            # Check if file was created
+
+            # Check if file was created and get size
             expected_file = output_folder / self._generate_filename(track)
-            
+
             # spotDL might use slightly different naming, check for similar files
             if expected_file.exists():
-                return True
-            
+                return True, expected_file.stat().st_size
+
             # Look for any new MP3 that matches
             pattern = f"*{track['title']}*.mp3"
             matches = list(output_folder.glob(pattern))
             if matches:
-                return True
-            
+                return True, matches[0].stat().st_size
+
             # Check stderr for errors
             if "No results found" in stderr or "Could not find" in stderr:
-                return False
-            
+                return False, 0
+
             # If no obvious error, assume success if exit code is 0
-            return self._current_process is None or True
-            
+            return self._current_process is None or True, 0
+
         except subprocess.TimeoutExpired:
             if self._current_process:
                 self._current_process.kill()
                 self._current_process = None
-            return False
+            return False, 0
         except Exception as e:
-            return False
+            return False, 0
     
     def _delete_track(self, track: Dict, output_folder: Path) -> bool:
         """Delete a track file from the output folder"""

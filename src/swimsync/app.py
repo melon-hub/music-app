@@ -366,8 +366,9 @@ class SwimSyncApp:
         self.sync_progress_panel.show()
 
         # Progress callback
-        def on_progress(current: int, total: int, track_name: str, status: str):
-            self.root.after(0, lambda: self._update_sync_progress(current, total, track_name, status))
+        def on_progress(current: int, total: int, track_name: str, status: str, extra: dict = None):
+            self.root.after(0, lambda c=current, t=total, n=track_name, s=status, e=extra:
+                            self._update_sync_progress(c, t, n, s, e or {}))
         
         # Run sync in thread
         def sync_thread():
@@ -385,19 +386,28 @@ class SwimSyncApp:
         self.sync_thread = threading.Thread(target=sync_thread, daemon=True)
         self.sync_thread.start()
     
-    def _update_sync_progress(self, current: int, total: int, track_name: str, status: str):
-        """Update UI with sync progress"""
-        self.status_var.set(f"[{current}/{total}] {status}: {track_name}")
-        self.sync_progress_panel.update_progress(current, total, track_name, status)
-        
+    def _update_sync_progress(self, current: int, total: int, track_name: str, status: str, extra: dict):
+        """Update UI with sync progress including speed and size"""
+        # Build status message with speed info
+        speed_str = ""
+        if extra.get("speed_mbps", 0) > 0:
+            speed_str = f" ({extra['speed_mbps']:.2f} MB/s)"
+
+        self.status_var.set(f"[{current}/{total}] {status}: {track_name}{speed_str}")
+        self.sync_progress_panel.update_progress(current, total, track_name, status, extra)
+
         # Update tree item status if possible
         for item in self.tree.get_children():
             values = self.tree.item(item, "values")
             if track_name in values[0]:
                 if status == "Downloading":
                     self.tree.item(item, values=(values[0], "◐ Downloading..."))
+                    # Scroll to make this item visible
+                    self.tree.see(item)
                 elif status == "Downloaded":
-                    self.tree.item(item, values=(values[0], "✓ Downloaded"), tags=("existing",))
+                    size_mb = extra.get("file_size_mb", 0)
+                    size_str = f"✓ {size_mb:.1f} MB" if size_mb else "✓ Done"
+                    self.tree.item(item, values=(values[0], size_str), tags=("existing",))
                 elif status == "Failed":
                     self.tree.item(item, values=(values[0], "✗ Failed"), tags=("removed",))
                 elif status == "Deleted":

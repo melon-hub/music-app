@@ -228,7 +228,8 @@ class SyncProgressPanel(ttk.Frame):
         current: int,
         total: int,
         track_name: str,
-        status: str
+        status: str,
+        extra: dict = None
     ):
         """
         Update the progress display.
@@ -238,7 +239,9 @@ class SyncProgressPanel(ttk.Frame):
             total: Total number of tracks to process.
             track_name: Name of the current track being processed.
             status: Current status (Downloading, Downloaded, Failed, etc.)
+            extra: Additional info dict with speed_mbps, file_size_mb, etc.
         """
+        extra = extra or {}
         self._processed_tracks = current
         self._total_tracks = total
 
@@ -249,8 +252,12 @@ class SyncProgressPanel(ttk.Frame):
         else:
             self._progress_bar["value"] = 0
 
-        # Update progress text
-        self._progress_text.configure(text=f"{current} of {total}")
+        # Update progress text with speed if available
+        speed = extra.get("speed_mbps", 0)
+        if speed > 0:
+            self._progress_text.configure(text=f"{current} of {total} • {speed:.1f} MB/s")
+        else:
+            self._progress_text.configure(text=f"{current} of {total}")
 
         # Update header with percentage
         if total > 0:
@@ -263,8 +270,13 @@ class SyncProgressPanel(ttk.Frame):
             display_name = track_name[:57] + "..."
         self._track_name_var.set(display_name)
 
-        # Update status label with appropriate style
-        self._status_label.configure(text=status)
+        # Update status label with file size if available
+        file_size = extra.get("file_size_mb", 0)
+        status_text = status
+        if status.lower() == "downloaded" and file_size > 0:
+            status_text = f"{status} ({file_size:.1f} MB)"
+
+        self._status_label.configure(text=status_text)
 
         status_lower = status.lower()
         if "downloading" in status_lower:
