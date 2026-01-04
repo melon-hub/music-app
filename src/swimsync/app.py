@@ -269,7 +269,8 @@ class SwimSyncApp:
                 self.root.after(0, lambda: self._on_playlist_loaded(playlist_name, tracks, preview))
                 
             except Exception as e:
-                self.root.after(0, lambda: self._on_load_error(str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda msg=error_msg: self._on_load_error(msg))
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -378,7 +379,8 @@ class SwimSyncApp:
                 )
                 self.root.after(0, lambda: self._on_sync_complete(results))
             except Exception as e:
-                self.root.after(0, lambda: self._on_sync_error(str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda msg=error_msg: self._on_sync_error(msg))
         
         self.sync_thread = threading.Thread(target=sync_thread, daemon=True)
         self.sync_thread.start()
